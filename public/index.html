@@ -11,7 +11,7 @@
       <h1>Behind the Alias</h1>
       <p>Can you figure out who's behind the screen?</p>
       <button type="button" id="show-create-form">Create Room</button>
-      <button type="button">Join Room</button>
+      <button type="button" id="show-join-form">Join Room</button>
     </main>
     <section id="create-screen" hidden>
       <h2>Create Room</h2>
@@ -37,6 +37,19 @@
         <p id="form-error" role="alert"></p>
       </form>
     </section>
+    <section id="join-screen" hidden>
+      <h2>Join Room</h2>
+      <form id="join-form">
+        <label for="join-name">Player name</label>
+        <input id="join-name" name="name" maxlength="30" required />
+
+        <label for="join-code">Room code</label>
+        <input id="join-code" name="roomCode" maxlength="5" required />
+
+        <button type="submit">Join Room</button>
+        <p id="join-error" role="alert"></p>
+      </form>
+    </section>
     <section id="lobby" hidden>
       <h2>Room Code</h2>
       <p id="room-code"></p>
@@ -47,6 +60,7 @@
       <p>Waiting for players...</p>
       <button type="button">Start Game</button>
     </section>
+    <script src="/socket.io/socket.io.js"></script>
     <script src="script.js"></script>
   </body>
 </html>
