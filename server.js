@@ -47,13 +47,44 @@ function matchForPlayer(room, player) {
   };
 }
 
+function shuffledChoices(choices) {
+  const result = [...choices];
+  for (let i = result.length - 1; i > 0; i--) {
+    const j = randomInt(i + 1);
+    [result[i], result[j]] = [result[j], result[i]];
+  }
+  return result;
+}
+
+function guessingForPlayer(room, player) {
+  const submitted = Object.hasOwn(room.guesses, player.id);
+  return {
+    options: submitted ? [] : room.guessOptions[player.id],
+    submitted,
+    submittedCount: Object.keys(room.guesses).length,
+    totalPlayers: room.players.length
+  };
+}
+
 function endChat(roomCode) {
   const room = rooms[roomCode];
   if (!room || room.phase !== "chat") return;
   clearTimeout(room.chatTimer);
   room.chatTimer = null;
   room.phase = "guessing";
-  io.to(roomCode).emit("chatEnded");
+  room.guesses = Object.create(null);
+  room.guessOptions = Object.create(null);
+  for (const player of room.players) {
+    room.guessOptions[player.id] = shuffledChoices(
+      room.players.filter((other) => other.id !== player.id)
+        .map(({ id, name }) => ({ id, name }))
+    );
+  }
+  for (const socketId of io.sockets.adapter.rooms.get(roomCode) || []) {
+    const playerSocket = io.sockets.sockets.get(socketId);
+    const player = room.players.find((member) => member.id === playerSocket?.data.playerId);
+    if (player) playerSocket.emit("chatEnded", guessingForPlayer(room, player));
+  }
 }
 
 app.use(express.json());
@@ -102,7 +133,8 @@ io.on("connection", (socket) => {
     if (room.phase === "chat") {
       return reply({ identity: matchForPlayer(room, player) });
     }
-    if (room.phase === "guessing") return reply({ guessing: true });
+    if (room.phase === "guessing") return reply({ guessing: guessingForPlayer(room, player) });
+    if (room.phase === "reveal_ready") return reply({ revealReady: true });
     reply({ room: publicRoom(roomCode) });
   });
 
@@ -199,6 +231,30 @@ io.on("connection", (socket) => {
       }
     }
     reply({ ok: true });
+  });
+
+  socket.on("submitGuess", (selectedPlayerId, reply) => {
+    if (typeof reply !== "function") return;
+    const roomCode = socket.data.roomCode;
+    const room = rooms[roomCode];
+    const player = room?.players.find((member) => member.id === socket.data.playerId);
+    if (!player) return reply({ error: "You are not in a valid room." });
+    if (room.guesses && Object.hasOwn(room.guesses, player.id)) {
+      return reply({ error: "You have already submitted a guess." });
+    }
+    if (room.phase !== "guessing") return reply({ error: "Guessing is not active." });
+    const selected = room.players.find((member) => member.id === selectedPlayerId);
+    if (!selected) return reply({ error: "Choose a player from this room." });
+    if (selected.id === player.id) return reply({ error: "You cannot choose yourself." });
+
+    room.guesses[player.id] = selected.id;
+    const submittedCount = Object.keys(room.guesses).length;
+    io.to(roomCode).emit("guessProgress", { submittedCount, totalPlayers: room.players.length });
+    if (submittedCount === room.players.length) {
+      room.phase = "reveal_ready";
+      io.to(roomCode).emit("revealReady");
+    }
+    reply({ ok: true, revealReady: room.phase === "reveal_ready" });
   });
 });
 

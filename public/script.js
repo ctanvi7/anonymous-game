@@ -5,9 +5,11 @@ const joinScreen = document.querySelector("#join-screen");
 const lobby = document.querySelector("#lobby");
 const identityScreen = document.querySelector("#identity-screen");
 const guessingScreen = document.querySelector("#guessing-screen");
+const revealReadyScreen = document.querySelector("#reveal-ready-screen");
 const createForm = document.querySelector("#create-form");
 const joinForm = document.querySelector("#join-form");
 const chatForm = document.querySelector("#chat-form");
+const guessForm = document.querySelector("#guess-form");
 let currentRoomCode = sessionStorage.getItem("roomCode");
 let currentPlayerId = sessionStorage.getItem("playerId");
 let currentPlayerName = sessionStorage.getItem("playerName");
@@ -80,10 +82,49 @@ function showIdentity(identity) {
   for (const message of identity.messages) showMessage(message);
   lobby.hidden = true;
   guessingScreen.hidden = true;
+  revealReadyScreen.hidden = true;
   identityScreen.hidden = false;
 }
 
-function showGuessing() {
+function showGuessProgress(progress) {
+  document.querySelector("#guess-progress").textContent =
+    `${progress.submittedCount} of ${progress.totalPlayers} players have submitted`;
+}
+
+function showWaiting() {
+  document.querySelector("#guess-choices").hidden = true;
+  document.querySelector("#guess-waiting").hidden = false;
+}
+
+function showGuessing(state) {
+  clearInterval(countdownInterval);
+  document.querySelector("#message-input").disabled = true;
+  chatForm.querySelector("button").disabled = true;
+  const options = document.querySelector("#guess-options");
+  options.replaceChildren();
+  for (const player of state.options) {
+    const label = document.createElement("label");
+    const input = document.createElement("input");
+    input.type = "radio";
+    input.name = "guess";
+    input.value = player.id;
+    label.append(input, document.createTextNode(` ${player.name}`));
+    options.append(label, document.createElement("br"));
+  }
+  document.querySelector("#guess-error").textContent = "";
+  document.querySelector("#guess-choices").hidden = state.submitted;
+  document.querySelector("#guess-waiting").hidden = !state.submitted;
+  showGuessProgress(state);
+  home.hidden = true;
+  createScreen.hidden = true;
+  joinScreen.hidden = true;
+  lobby.hidden = true;
+  identityScreen.hidden = true;
+  revealReadyScreen.hidden = true;
+  guessingScreen.hidden = false;
+}
+
+function showRevealReady() {
   clearInterval(countdownInterval);
   document.querySelector("#message-input").disabled = true;
   chatForm.querySelector("button").disabled = true;
@@ -92,19 +133,23 @@ function showGuessing() {
   joinScreen.hidden = true;
   lobby.hidden = true;
   identityScreen.hidden = true;
-  guessingScreen.hidden = false;
+  guessingScreen.hidden = true;
+  revealReadyScreen.hidden = false;
 }
 
 socket.on("roomUpdated", showLobby);
 socket.on("gameStarted", showIdentity);
 socket.on("chatMessage", showMessage);
 socket.on("chatEnded", showGuessing);
+socket.on("guessProgress", showGuessProgress);
+socket.on("revealReady", showRevealReady);
 socket.on("connect", () => {
   if (currentRoomCode && currentPlayerId) {
     socket.emit("enterRoom", { roomCode: currentRoomCode, playerId: currentPlayerId }, (result) => {
       if (result.room) showLobby(result.room);
       if (result.identity) showIdentity(result.identity);
-      if (result.guessing) showGuessing();
+      if (result.guessing) showGuessing(result.guessing);
+      if (result.revealReady) showRevealReady();
       if (result.error) {
         sessionStorage.removeItem("roomCode");
         sessionStorage.removeItem("playerId");
@@ -203,5 +248,21 @@ chatForm.addEventListener("submit", (event) => {
   socket.emit("sendMessage", input.value, (result) => {
     if (result.error) error.textContent = result.error;
     else input.value = "";
+  });
+});
+
+guessForm.addEventListener("submit", (event) => {
+  event.preventDefault();
+  const selected = guessForm.querySelector('input[name="guess"]:checked');
+  const error = document.querySelector("#guess-error");
+  error.textContent = "";
+  if (!selected) {
+    error.textContent = "Choose a player before submitting.";
+    return;
+  }
+  socket.emit("submitGuess", selected.value, (result) => {
+    if (result.error) error.textContent = result.error;
+    else if (result.revealReady) showRevealReady();
+    else showWaiting();
   });
 });

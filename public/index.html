@@ -79,9 +79,24 @@
       </form>
     </section>
     <section id="guessing-screen" hidden>
-      <h2>Time's up!</h2>
-      <p>Who do you think you were talking to?</p>
-      <p>Guessing phase coming next...</p>
+      <div id="guess-choices">
+        <h2>Time's up!</h2>
+        <p>Who do you think you were talking to?</p>
+        <form id="guess-form">
+          <div id="guess-options"></div>
+          <button type="submit">Submit Guess</button>
+          <p id="guess-error" role="alert"></p>
+        </form>
+      </div>
+      <div id="guess-waiting" hidden>
+        <h2>Guess submitted!</h2>
+        <p>Waiting for other players...</p>
+      </div>
+      <p id="guess-progress"></p>
+    </section>
+    <section id="reveal-ready-screen" hidden>
+      <h2>Everyone has submitted!</h2>
+      <p>Preparing results...</p>
     </section>
     <script src="/socket.io/socket.io.js"></script>
     <script src="script.js"></script>
