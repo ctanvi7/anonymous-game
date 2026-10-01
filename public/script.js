@@ -3,10 +3,12 @@ const home = document.querySelector("#home");
 const createScreen = document.querySelector("#create-screen");
 const joinScreen = document.querySelector("#join-screen");
 const lobby = document.querySelector("#lobby");
+const identityScreen = document.querySelector("#identity-screen");
 const createForm = document.querySelector("#create-form");
 const joinForm = document.querySelector("#join-form");
 let currentRoomCode;
 let currentPlayerId;
+let currentPlayerName;
 
 function showLobby(room) {
   document.querySelector("#room-code").textContent = room.roomCode;
@@ -25,17 +27,29 @@ function showLobby(room) {
   }
   document.querySelector("#lobby-duration").textContent = room.settings.chatDuration;
   document.querySelector("#lobby-rounds").textContent = room.settings.totalRounds;
+  document.querySelector("#start-game").hidden = !room.players.some((player) => player.isHost && player.name === currentPlayerName);
   home.hidden = true;
   createScreen.hidden = true;
   joinScreen.hidden = true;
   lobby.hidden = false;
 }
 
+function showIdentity(identity) {
+  document.querySelector("#my-alias").textContent = identity.alias;
+  document.querySelector("#current-round").textContent = identity.round;
+  document.querySelector("#game-rounds").textContent = identity.totalRounds;
+  document.querySelector("#game-duration").textContent = identity.chatDuration;
+  lobby.hidden = true;
+  identityScreen.hidden = false;
+}
+
 socket.on("roomUpdated", showLobby);
+socket.on("gameStarted", showIdentity);
 socket.on("connect", () => {
   if (currentRoomCode && currentPlayerId) {
     socket.emit("enterRoom", { roomCode: currentRoomCode, playerId: currentPlayerId }, (result) => {
       if (result.room) showLobby(result.room);
+      if (result.identity) showIdentity(result.identity);
     });
   }
 });
@@ -77,6 +91,7 @@ createForm.addEventListener("submit", async (event) => {
 
     currentRoomCode = created.roomCode;
     currentPlayerId = created.playerId;
+    currentPlayerName = name;
     socket.emit("enterRoom", { roomCode: currentRoomCode, playerId: currentPlayerId }, (result) => {
       if (result.error) error.textContent = result.error;
       else showLobby(result.room);
@@ -104,6 +119,15 @@ joinForm.addEventListener("submit", (event) => {
     }
     currentRoomCode = result.room.roomCode;
     currentPlayerId = result.playerId;
+    currentPlayerName = name;
     showLobby(result.room);
+  });
+});
+
+document.querySelector("#start-game").addEventListener("click", () => {
+  const error = document.querySelector("#start-error");
+  error.textContent = "";
+  socket.emit("startGame", (result) => {
+    if (result.error) error.textContent = result.error;
   });
 });

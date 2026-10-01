@@ -58,7 +58,17 @@
       <p>Chat duration: <span id="lobby-duration"></span> minutes</p>
       <p>Number of rounds: <span id="lobby-rounds"></span></p>
       <p>Waiting for players...</p>
-      <button type="button">Start Game</button>
+      <button type="button" id="start-game">Start Game</button>
+      <p id="start-error" role="alert"></p>
+    </section>
+    <section id="identity-screen" hidden>
+      <h2>Your Identity</h2>
+      <p>Your anonymous name is</p>
+      <p id="my-alias"></p>
+      <p>Keep your real identity secret.</p>
+      <p>Round <span id="current-round"></span> of <span id="game-rounds"></span></p>
+      <p>Chat duration: <span id="game-duration"></span> minutes</p>
+      <p>Preparing your match...</p>
     </section>
     <script src="/socket.io/socket.io.js"></script>
     <script src="script.js"></script>

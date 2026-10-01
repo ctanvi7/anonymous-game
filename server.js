@@ -10,6 +10,12 @@ const io = new Server(server);
 const port = 3000;
 const rooms = {};
 const codeCharacters = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+const aliases = [
+  "NeonToast", "SilentPanda", "CrimsonFox", "MangoWizard",
+  "CosmicPenguin", "VelvetTiger", "PixelGhost", "LunarKoala",
+  "TurboSloth", "MysticOtter", "ElectricLlama", "ShadowPeach",
+  "GoldenRaven", "FrostyCactus", "BananaKnight", "PurpleMeteor"
+];
 
 function publicRoom(roomCode) {
   const room = rooms[roomCode];
@@ -52,11 +58,22 @@ app.post("/api/rooms", (req, res) => {
 io.on("connection", (socket) => {
   socket.on("enterRoom", ({ roomCode, playerId }, reply) => {
     const room = rooms[roomCode];
-    if (!room || !room.players.some((player) => player.id === playerId)) {
+    const player = room?.players.find((player) => player.id === playerId);
+    if (!player) {
       return reply({ error: "Room or player not found." });
     }
 
     socket.join(roomCode);
+    socket.data.roomCode = roomCode;
+    socket.data.playerId = playerId;
+    if (room.phase === "game_started") {
+      return reply({ identity: {
+        alias: player.alias,
+        round: room.round,
+        totalRounds: room.settings.totalRounds,
+        chatDuration: room.settings.chatDuration
+      } });
+    }
     reply({ room: publicRoom(roomCode) });
   });
 
@@ -68,6 +85,7 @@ io.on("connection", (socket) => {
     }
     const room = rooms[code];
     if (!room) return reply({ error: "Room not found. Check the room code." });
+    if (room.phase !== "lobby") return reply({ error: "This game has already started." });
     if (room.players.some((player) => player.name.toLowerCase() === playerName.toLowerCase())) {
       return reply({ error: "That player name is already taken in this room." });
     }
@@ -75,9 +93,44 @@ io.on("connection", (socket) => {
     const playerId = randomUUID();
     room.players.push({ id: playerId, name: playerName, isHost: false });
     socket.join(code);
+    socket.data.roomCode = code;
+    socket.data.playerId = playerId;
     const visibleRoom = publicRoom(code);
     reply({ room: visibleRoom, playerId });
     socket.to(code).emit("roomUpdated", visibleRoom);
+  });
+
+  socket.on("startGame", (reply) => {
+    const roomCode = socket.data.roomCode;
+    const room = rooms[roomCode];
+    const player = room?.players.find((player) => player.id === socket.data.playerId);
+    if (!player?.isHost) return reply({ error: "Only the host can start the game." });
+    if (room.phase !== "lobby") return reply({ error: "The game has already started." });
+    if (room.players.length < 2) return reply({ error: "At least 2 players are needed to start." });
+    if (room.players.length % 2 !== 0) return reply({ error: "An even number of players is needed to start." });
+    if (room.players.length > aliases.length) return reply({ error: "This room supports up to 16 players." });
+
+    const availableAliases = [...aliases];
+    for (const roomPlayer of room.players) {
+      const index = randomInt(availableAliases.length);
+      roomPlayer.alias = availableAliases.splice(index, 1)[0];
+    }
+    room.phase = "game_started";
+    room.round = 1;
+
+    for (const socketId of io.sockets.adapter.rooms.get(roomCode) || []) {
+      const playerSocket = io.sockets.sockets.get(socketId);
+      const ownPlayer = room.players.find((member) => member.id === playerSocket.data.playerId);
+      if (ownPlayer) {
+        playerSocket.emit("gameStarted", {
+          alias: ownPlayer.alias,
+          round: room.round,
+          totalRounds: room.settings.totalRounds,
+          chatDuration: room.settings.chatDuration
+        });
+      }
+    }
+    reply({ ok: true });
   });
 });
 
