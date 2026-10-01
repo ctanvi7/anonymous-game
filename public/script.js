@@ -15,6 +15,7 @@ let currentRoomCode = sessionStorage.getItem("roomCode");
 let currentPlayerId = sessionStorage.getItem("playerId");
 let currentPlayerName = sessionStorage.getItem("playerName");
 let currentAlias;
+let currentRound;
 let countdownInterval;
 
 function savePlayer() {
@@ -57,12 +58,15 @@ function showMessage(message) {
 
 function showIdentity(identity) {
   currentAlias = identity.alias;
+  currentRound = identity.round;
   document.querySelector("#my-alias").textContent = identity.alias;
   document.querySelector("#partner-alias").textContent = identity.partnerAlias;
   document.querySelector("#current-round").textContent = identity.round;
   document.querySelector("#game-rounds").textContent = identity.totalRounds;
   document.querySelector("#game-duration").textContent = identity.chatDuration;
   const messageInput = document.querySelector("#message-input");
+  messageInput.value = "";
+  document.querySelector("#chat-error").textContent = "";
   messageInput.disabled = false;
   chatForm.querySelector("button").disabled = false;
   clearInterval(countdownInterval);
@@ -99,6 +103,7 @@ function showWaiting() {
 }
 
 function showGuessing(state) {
+  currentRound = state.round;
   clearInterval(countdownInterval);
   document.querySelector("#message-input").disabled = true;
   chatForm.querySelector("button").disabled = true;
@@ -149,6 +154,7 @@ function showReveal(result) {
 }
 
 function showScoreboard(scoreboard) {
+  currentRound = scoreboard.round;
   document.querySelector("#round-complete").textContent = `Round ${scoreboard.round} Complete`;
   document.querySelector("#scoreboard-round").textContent =
     `Round ${scoreboard.round} of ${scoreboard.totalRounds}`;
@@ -163,8 +169,15 @@ function showScoreboard(scoreboard) {
     }
     rows.append(row);
   });
-  document.querySelector("#next-round").hidden = !scoreboard.isHost;
-  document.querySelector("#waiting-for-host").hidden = scoreboard.isHost;
+  const nextRoundButton = document.querySelector("#next-round");
+  nextRoundButton.hidden = !scoreboard.isHost;
+  nextRoundButton.disabled = scoreboard.round >= scoreboard.totalRounds;
+  const waiting = document.querySelector("#waiting-for-host");
+  waiting.hidden = scoreboard.isHost;
+  waiting.textContent = scoreboard.round < scoreboard.totalRounds
+    ? "Waiting for host to start the next round..."
+    : "All rounds complete.";
+  document.querySelector("#next-round-error").textContent = "";
   home.hidden = true;
   createScreen.hidden = true;
   joinScreen.hidden = true;
@@ -285,7 +298,7 @@ chatForm.addEventListener("submit", (event) => {
   const input = document.querySelector("#message-input");
   const error = document.querySelector("#chat-error");
   error.textContent = "";
-  socket.emit("sendMessage", input.value, (result) => {
+  socket.emit("sendMessage", input.value, currentRound, (result) => {
     if (result.error) error.textContent = result.error;
     else input.value = "";
   });
@@ -300,7 +313,7 @@ guessForm.addEventListener("submit", (event) => {
     error.textContent = "Choose a player before submitting.";
     return;
   }
-  socket.emit("submitGuess", selected.value, (result) => {
+  socket.emit("submitGuess", selected.value, currentRound, (result) => {
     if (result.error) error.textContent = result.error;
     else if (!result.reveal) showWaiting();
   });
@@ -312,5 +325,13 @@ document.querySelector("#continue-to-scoreboard").addEventListener("click", () =
   socket.emit("continueToScoreboard", (result) => {
     if (result.error) error.textContent = result.error;
     if (result.scoreboard) showScoreboard(result.scoreboard);
+  });
+});
+
+document.querySelector("#next-round").addEventListener("click", () => {
+  const error = document.querySelector("#next-round-error");
+  error.textContent = "";
+  socket.emit("nextRound", (result) => {
+    if (result.error) error.textContent = result.error;
   });
 });

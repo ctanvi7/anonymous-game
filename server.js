@@ -60,6 +60,7 @@ function guessingForPlayer(room, player) {
   const submitted = Object.hasOwn(room.guesses, player.id);
   return {
     options: submitted ? [] : room.guessOptions[player.id],
+    round: room.round,
     submitted,
     submittedCount: Object.keys(room.guesses).length,
     totalPlayers: room.players.length
@@ -104,6 +105,40 @@ function scoreboardForPlayer(room, player) {
     rows,
     isHost: player.isHost
   };
+}
+
+function beginRound(roomCode) {
+  const room = rooms[roomCode];
+  clearTimeout(room.chatTimer);
+  room.chatTimer = null;
+  room.chatStartedAt = null;
+  room.chatEndsAt = null;
+  room.guesses = Object.create(null);
+  room.guessOptions = Object.create(null);
+  room.pairs = [];
+  for (const player of room.players) player.roundScore = 0;
+
+  let newAliases;
+  do {
+    newAliases = shuffledChoices(aliases).slice(0, room.players.length);
+  } while (room.players.some((player, index) => player.alias === newAliases[index]));
+  room.players.forEach((player, index) => { player.alias = newAliases[index]; });
+
+  const shuffledIds = shuffledChoices(room.players.map((player) => player.id));
+  for (let i = 0; i < shuffledIds.length; i += 2) {
+    room.pairs.push({ player1Id: shuffledIds[i], player2Id: shuffledIds[i + 1], messages: [] });
+  }
+  room.round += 1;
+  room.phase = "chat";
+  room.chatStartedAt = Date.now();
+  room.chatEndsAt = room.chatStartedAt + room.settings.chatDuration * 60 * 1000;
+  room.chatTimer = setTimeout(() => endChat(roomCode), room.chatEndsAt - room.chatStartedAt);
+
+  for (const socketId of io.sockets.adapter.rooms.get(roomCode) || []) {
+    const playerSocket = io.sockets.sockets.get(socketId);
+    const player = room.players.find((member) => member.id === playerSocket?.data.playerId);
+    if (player) playerSocket.emit("gameStarted", matchForPlayer(room, player));
+  }
 }
 
 function endChat(roomCode) {
@@ -216,42 +251,17 @@ io.on("connection", (socket) => {
     if (room.players.length % 2 !== 0) return reply({ error: "An even number of players is needed to start." });
     if (room.players.length > aliases.length) return reply({ error: "This room supports up to 16 players." });
 
-    const availableAliases = [...aliases];
-    for (const roomPlayer of room.players) {
-      const index = randomInt(availableAliases.length);
-      roomPlayer.alias = availableAliases.splice(index, 1)[0];
-    }
-    const shuffledIds = room.players.map((member) => member.id);
-    for (let i = shuffledIds.length - 1; i > 0; i--) {
-      const j = randomInt(i + 1);
-      [shuffledIds[i], shuffledIds[j]] = [shuffledIds[j], shuffledIds[i]];
-    }
-    room.pairs = [];
-    for (let i = 0; i < shuffledIds.length; i += 2) {
-      room.pairs.push({ player1Id: shuffledIds[i], player2Id: shuffledIds[i + 1], messages: [] });
-    }
-    room.phase = "chat";
-    room.round = 1;
-    room.chatStartedAt = Date.now();
-    room.chatEndsAt = room.chatStartedAt + room.settings.chatDuration * 60 * 1000;
-    room.chatTimer = setTimeout(() => endChat(roomCode), room.chatEndsAt - room.chatStartedAt);
-
-    for (const socketId of io.sockets.adapter.rooms.get(roomCode) || []) {
-      const playerSocket = io.sockets.sockets.get(socketId);
-      const ownPlayer = room.players.find((member) => member.id === playerSocket.data.playerId);
-      if (ownPlayer) {
-        playerSocket.emit("gameStarted", matchForPlayer(room, ownPlayer));
-      }
-    }
+    beginRound(roomCode);
     reply({ ok: true });
   });
 
-  socket.on("sendMessage", (messageText, reply) => {
+  socket.on("sendMessage", (messageText, actionRound, reply) => {
     if (typeof reply !== "function") return;
     const roomCode = socket.data.roomCode;
     const room = rooms[roomCode];
     const sender = room?.players.find((player) => player.id === socket.data.playerId);
     if (!sender) return reply({ error: "You are not in a valid room." });
+    if (actionRound !== room.round) return reply({ error: "This action belongs to an earlier round." });
     if (room.phase === "chat" && Date.now() >= room.chatEndsAt) endChat(roomCode);
     if (room.phase !== "chat") return reply({ error: "Chat is not active." });
     const pair = room.pairs.find(({ player1Id, player2Id }) =>
@@ -275,12 +285,13 @@ io.on("connection", (socket) => {
     reply({ ok: true });
   });
 
-  socket.on("submitGuess", (selectedPlayerId, reply) => {
+  socket.on("submitGuess", (selectedPlayerId, actionRound, reply) => {
     if (typeof reply !== "function") return;
     const roomCode = socket.data.roomCode;
     const room = rooms[roomCode];
     const player = room?.players.find((member) => member.id === socket.data.playerId);
     if (!player) return reply({ error: "You are not in a valid room." });
+    if (actionRound !== room.round) return reply({ error: "This action belongs to an earlier round." });
     if (room.guesses && Object.hasOwn(room.guesses, player.id)) {
       return reply({ error: "You have already submitted a guess." });
     }
@@ -321,6 +332,19 @@ io.on("connection", (socket) => {
       const ownPlayer = room.players.find((member) => member.id === playerSocket?.data.playerId);
       if (ownPlayer) playerSocket.emit("scoreboardReady", scoreboardForPlayer(room, ownPlayer));
     }
+    reply({ ok: true });
+  });
+
+  socket.on("nextRound", (reply) => {
+    if (typeof reply !== "function") return;
+    const roomCode = socket.data.roomCode;
+    const room = rooms[roomCode];
+    const player = room?.players.find((member) => member.id === socket.data.playerId);
+    if (!player?.isHost) return reply({ error: "Only the host can start the next round." });
+    if (room.phase !== "scoreboard") return reply({ error: "The next round cannot start yet." });
+    if (room.round >= room.settings.totalRounds) return reply({ error: "All rounds are complete." });
+
+    beginRound(roomCode);
     reply({ ok: true });
   });
 });
