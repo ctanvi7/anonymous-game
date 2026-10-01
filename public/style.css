@@ -1,0 +1,41 @@
+body {
+  font-family: Arial, sans-serif;
+  text-align: center;
+  margin-top: 100px;
+}
+
+button {
+  padding: 10px 16px;
+  margin: 8px;
+  cursor: pointer;
+}
+
+form {
+  display: grid;
+  gap: 10px;
+  max-width: 280px;
+  margin: auto;
+  text-align: left;
+}
+
+form button {
+  margin: 8px 0;
+}
+
+#room-code {
+  font-size: 2em;
+  font-weight: bold;
+  letter-spacing: 0.2em;
+}
+
+#player-list {
+  list-style: none;
+  padding: 0;
+}
+
+.host-badge {
+  background: #ddd;
+  border-radius: 4px;
+  padding: 2px 6px;
+  font-size: 0.8em;
+}

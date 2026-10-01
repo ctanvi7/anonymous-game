@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Behind the Alias</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <main id="home">
+      <h1>Behind the Alias</h1>
+      <p>Can you figure out who's behind the screen?</p>
+      <button type="button" id="show-create-form">Create Room</button>
+      <button type="button">Join Room</button>
+    </main>
+    <section id="create-screen" hidden>
+      <h2>Create Room</h2>
+      <form id="create-form">
+        <label for="player-name">Player name</label>
+        <input id="player-name" name="name" maxlength="30" required />
+
+        <label for="chat-duration">Chat duration</label>
+        <select id="chat-duration" name="chatDuration">
+          <option value="2">2 minutes</option>
+          <option value="3" selected>3 minutes</option>
+          <option value="5">5 minutes</option>
+        </select>
+
+        <label for="total-rounds">Number of rounds</label>
+        <select id="total-rounds" name="totalRounds">
+          <option value="1">1 round</option>
+          <option value="3" selected>3 rounds</option>
+          <option value="5">5 rounds</option>
+        </select>
+
+        <button type="submit">Create Room</button>
+        <p id="form-error" role="alert"></p>
+      </form>
+    </section>
+    <section id="lobby" hidden>
+      <h2>Room Code</h2>
+      <p id="room-code"></p>
+      <h3>Players</h3>
+      <ul id="player-list"></ul>
+      <p>Chat duration: <span id="lobby-duration"></span> minutes</p>
+      <p>Number of rounds: <span id="lobby-rounds"></span></p>
+      <p>Waiting for players...</p>
+      <button type="button">Start Game</button>
+    </section>
+    <script src="script.js"></script>
+  </body>
+</html>
