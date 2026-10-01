@@ -6,6 +6,7 @@ const lobby = document.querySelector("#lobby");
 const identityScreen = document.querySelector("#identity-screen");
 const guessingScreen = document.querySelector("#guessing-screen");
 const revealScreen = document.querySelector("#reveal-screen");
+const scoreboardScreen = document.querySelector("#scoreboard-screen");
 const createForm = document.querySelector("#create-form");
 const joinForm = document.querySelector("#join-form");
 const chatForm = document.querySelector("#chat-form");
@@ -83,6 +84,7 @@ function showIdentity(identity) {
   lobby.hidden = true;
   guessingScreen.hidden = true;
   revealScreen.hidden = true;
+  scoreboardScreen.hidden = true;
   identityScreen.hidden = false;
 }
 
@@ -121,6 +123,7 @@ function showGuessing(state) {
   lobby.hidden = true;
   identityScreen.hidden = true;
   revealScreen.hidden = true;
+  scoreboardScreen.hidden = true;
   guessingScreen.hidden = false;
 }
 
@@ -141,7 +144,35 @@ function showReveal(result) {
   lobby.hidden = true;
   identityScreen.hidden = true;
   guessingScreen.hidden = true;
+  scoreboardScreen.hidden = true;
   revealScreen.hidden = false;
+}
+
+function showScoreboard(scoreboard) {
+  document.querySelector("#round-complete").textContent = `Round ${scoreboard.round} Complete`;
+  document.querySelector("#scoreboard-round").textContent =
+    `Round ${scoreboard.round} of ${scoreboard.totalRounds}`;
+  const rows = document.querySelector("#scoreboard-rows");
+  rows.replaceChildren();
+  scoreboard.rows.forEach((player, index) => {
+    const row = document.createElement("tr");
+    for (const value of [index + 1, player.name, `+${player.roundScore}`, player.totalScore]) {
+      const cell = document.createElement("td");
+      cell.textContent = value;
+      row.append(cell);
+    }
+    rows.append(row);
+  });
+  document.querySelector("#next-round").hidden = !scoreboard.isHost;
+  document.querySelector("#waiting-for-host").hidden = scoreboard.isHost;
+  home.hidden = true;
+  createScreen.hidden = true;
+  joinScreen.hidden = true;
+  lobby.hidden = true;
+  identityScreen.hidden = true;
+  guessingScreen.hidden = true;
+  revealScreen.hidden = true;
+  scoreboardScreen.hidden = false;
 }
 
 socket.on("roomUpdated", showLobby);
@@ -150,6 +181,7 @@ socket.on("chatMessage", showMessage);
 socket.on("chatEnded", showGuessing);
 socket.on("guessProgress", showGuessProgress);
 socket.on("revealResult", showReveal);
+socket.on("scoreboardReady", showScoreboard);
 socket.on("connect", () => {
   if (currentRoomCode && currentPlayerId) {
     socket.emit("enterRoom", { roomCode: currentRoomCode, playerId: currentPlayerId }, (result) => {
@@ -157,6 +189,7 @@ socket.on("connect", () => {
       if (result.identity) showIdentity(result.identity);
       if (result.guessing) showGuessing(result.guessing);
       if (result.reveal) showReveal(result.reveal);
+      if (result.scoreboard) showScoreboard(result.scoreboard);
       if (result.error) {
         sessionStorage.removeItem("roomCode");
         sessionStorage.removeItem("playerId");
@@ -270,5 +303,14 @@ guessForm.addEventListener("submit", (event) => {
   socket.emit("submitGuess", selected.value, (result) => {
     if (result.error) error.textContent = result.error;
     else if (!result.reveal) showWaiting();
+  });
+});
+
+document.querySelector("#continue-to-scoreboard").addEventListener("click", () => {
+  const error = document.querySelector("#reveal-error");
+  error.textContent = "";
+  socket.emit("continueToScoreboard", (result) => {
+    if (result.error) error.textContent = result.error;
+    if (result.scoreboard) showScoreboard(result.scoreboard);
   });
 });

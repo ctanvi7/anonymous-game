@@ -103,7 +103,20 @@
       <p>Your guess: <span id="guessed-name"></span></p>
       <h3 id="guess-result"></h3>
       <p id="partner-result"></p>
-      <button type="button" disabled>Continue to scoreboard</button>
+      <button type="button" id="continue-to-scoreboard">Continue to scoreboard</button>
+      <p id="reveal-error" role="alert"></p>
+    </section>
+    <section id="scoreboard-screen" hidden>
+      <h2 id="round-complete"></h2>
+      <p id="scoreboard-round"></p>
+      <table>
+        <thead>
+          <tr><th>Rank</th><th>Player name</th><th>Round points</th><th>Total points</th></tr>
+        </thead>
+        <tbody id="scoreboard-rows"></tbody>
+      </table>
+      <button type="button" id="next-round" disabled>Next Round</button>
+      <p id="waiting-for-host">Waiting for host to start the next round...</p>
     </section>
     <script src="/socket.io/socket.io.js"></script>
     <script src="script.js"></script>
