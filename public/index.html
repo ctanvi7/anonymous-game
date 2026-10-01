@@ -62,15 +62,20 @@
       <p id="start-error" role="alert"></p>
     </section>
     <section id="identity-screen" hidden>
-      <h2>You have been matched!</h2>
+      <h2>Private Chat</h2>
       <p>You are:</p>
       <p id="my-alias"></p>
-      <p>Your partner is:</p>
+      <p>Chatting with:</p>
       <p id="partner-alias"></p>
-      <p>Their real identity is hidden.</p>
       <p>Round <span id="current-round"></span> of <span id="game-rounds"></span></p>
       <p>Chat duration: <span id="game-duration"></span> minutes</p>
-      <p>Chat will begin shortly...</p>
+      <div id="messages" aria-live="polite"></div>
+      <form id="chat-form">
+        <label for="message-input">Message</label>
+        <input id="message-input" maxlength="500" autocomplete="off" required />
+        <button type="submit">Send</button>
+        <p id="chat-error" role="alert"></p>
+      </form>
     </section>
     <script src="/socket.io/socket.io.js"></script>
     <script src="script.js"></script>

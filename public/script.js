@@ -6,9 +6,11 @@ const lobby = document.querySelector("#lobby");
 const identityScreen = document.querySelector("#identity-screen");
 const createForm = document.querySelector("#create-form");
 const joinForm = document.querySelector("#join-form");
+const chatForm = document.querySelector("#chat-form");
 let currentRoomCode;
 let currentPlayerId;
 let currentPlayerName;
+let currentAlias;
 
 function showLobby(room) {
   document.querySelector("#room-code").textContent = room.roomCode;
@@ -34,18 +36,30 @@ function showLobby(room) {
   lobby.hidden = false;
 }
 
+function showMessage(message) {
+  const item = document.createElement("p");
+  const label = document.createElement("strong");
+  label.textContent = message.senderAlias === currentAlias ? "You: " : `${message.senderAlias}: `;
+  item.append(label, document.createTextNode(message.text));
+  document.querySelector("#messages").append(item);
+}
+
 function showIdentity(identity) {
+  currentAlias = identity.alias;
   document.querySelector("#my-alias").textContent = identity.alias;
   document.querySelector("#partner-alias").textContent = identity.partnerAlias;
   document.querySelector("#current-round").textContent = identity.round;
   document.querySelector("#game-rounds").textContent = identity.totalRounds;
   document.querySelector("#game-duration").textContent = identity.chatDuration;
+  document.querySelector("#messages").replaceChildren();
+  for (const message of identity.messages) showMessage(message);
   lobby.hidden = true;
   identityScreen.hidden = false;
 }
 
 socket.on("roomUpdated", showLobby);
 socket.on("gameStarted", showIdentity);
+socket.on("chatMessage", showMessage);
 socket.on("connect", () => {
   if (currentRoomCode && currentPlayerId) {
     socket.emit("enterRoom", { roomCode: currentRoomCode, playerId: currentPlayerId }, (result) => {
@@ -130,5 +144,16 @@ document.querySelector("#start-game").addEventListener("click", () => {
   error.textContent = "";
   socket.emit("startGame", (result) => {
     if (result.error) error.textContent = result.error;
+  });
+});
+
+chatForm.addEventListener("submit", (event) => {
+  event.preventDefault();
+  const input = document.querySelector("#message-input");
+  const error = document.querySelector("#chat-error");
+  error.textContent = "";
+  socket.emit("sendMessage", input.value, (result) => {
+    if (result.error) error.textContent = result.error;
+    else input.value = "";
   });
 });

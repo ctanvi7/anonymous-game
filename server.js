@@ -8,7 +8,7 @@ const app = express();
 const server = createServer(app);
 const io = new Server(server);
 const port = 3000;
-const rooms = {};
+const rooms = Object.create(null);
 const codeCharacters = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 const aliases = [
   "NeonToast", "SilentPanda", "CrimsonFox", "MangoWizard",
@@ -37,7 +37,11 @@ function matchForPlayer(room, player) {
     partnerAlias: partner.alias,
     round: room.round,
     totalRounds: room.settings.totalRounds,
-    chatDuration: room.settings.chatDuration
+    chatDuration: room.settings.chatDuration,
+    messages: pair.messages.map(({ senderId, text }) => ({
+      senderAlias: room.players.find((member) => member.id === senderId).alias,
+      text
+    }))
   };
 }
 
@@ -71,7 +75,9 @@ app.post("/api/rooms", (req, res) => {
 });
 
 io.on("connection", (socket) => {
-  socket.on("enterRoom", ({ roomCode, playerId }, reply) => {
+  socket.on("enterRoom", (data, reply) => {
+    if (typeof reply !== "function") return;
+    const { roomCode, playerId } = data && typeof data === "object" ? data : {};
     const room = rooms[roomCode];
     const player = room?.players.find((player) => player.id === playerId);
     if (!player) {
@@ -81,13 +87,15 @@ io.on("connection", (socket) => {
     socket.join(roomCode);
     socket.data.roomCode = roomCode;
     socket.data.playerId = playerId;
-    if (room.phase === "game_started") {
+    if (room.phase === "chat") {
       return reply({ identity: matchForPlayer(room, player) });
     }
     reply({ room: publicRoom(roomCode) });
   });
 
-  socket.on("joinRoom", ({ name, roomCode }, reply) => {
+  socket.on("joinRoom", (data, reply) => {
+    if (typeof reply !== "function") return;
+    const { name, roomCode } = data && typeof data === "object" ? data : {};
     const playerName = typeof name === "string" ? name.trim() : "";
     const code = typeof roomCode === "string" ? roomCode.trim().toUpperCase() : "";
     if (!playerName || playerName.length > 30) {
@@ -111,6 +119,7 @@ io.on("connection", (socket) => {
   });
 
   socket.on("startGame", (reply) => {
+    if (typeof reply !== "function") return;
     const roomCode = socket.data.roomCode;
     const room = rooms[roomCode];
     const player = room?.players.find((player) => player.id === socket.data.playerId);
@@ -132,9 +141,9 @@ io.on("connection", (socket) => {
     }
     room.pairs = [];
     for (let i = 0; i < shuffledIds.length; i += 2) {
-      room.pairs.push({ player1Id: shuffledIds[i], player2Id: shuffledIds[i + 1] });
+      room.pairs.push({ player1Id: shuffledIds[i], player2Id: shuffledIds[i + 1], messages: [] });
     }
-    room.phase = "game_started";
+    room.phase = "chat";
     room.round = 1;
 
     for (const socketId of io.sockets.adapter.rooms.get(roomCode) || []) {
@@ -142,6 +151,34 @@ io.on("connection", (socket) => {
       const ownPlayer = room.players.find((member) => member.id === playerSocket.data.playerId);
       if (ownPlayer) {
         playerSocket.emit("gameStarted", matchForPlayer(room, ownPlayer));
+      }
+    }
+    reply({ ok: true });
+  });
+
+  socket.on("sendMessage", (messageText, reply) => {
+    if (typeof reply !== "function") return;
+    const roomCode = socket.data.roomCode;
+    const room = rooms[roomCode];
+    const sender = room?.players.find((player) => player.id === socket.data.playerId);
+    if (!sender) return reply({ error: "You are not in a valid room." });
+    if (room.phase !== "chat") return reply({ error: "Chat is not active." });
+    const pair = room.pairs.find(({ player1Id, player2Id }) =>
+      player1Id === sender.id || player2Id === sender.id
+    );
+    if (!pair) return reply({ error: "You do not have a partner." });
+    if (typeof messageText !== "string" || !messageText.trim()) {
+      return reply({ error: "Enter a message before sending." });
+    }
+    const text = messageText.trim();
+    if (text.length > 500) return reply({ error: "Messages must be 500 characters or fewer." });
+
+    pair.messages.push({ senderId: sender.id, text });
+    const visibleMessage = { senderAlias: sender.alias, text };
+    for (const socketId of io.sockets.adapter.rooms.get(roomCode) || []) {
+      const playerSocket = io.sockets.sockets.get(socketId);
+      if (playerSocket && [pair.player1Id, pair.player2Id].includes(playerSocket.data.playerId)) {
+        playerSocket.emit("chatMessage", visibleMessage);
       }
     }
     reply({ ok: true });
