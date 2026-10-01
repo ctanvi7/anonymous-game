@@ -119,6 +119,21 @@
       <p id="next-round-error" role="alert"></p>
       <p id="waiting-for-host">Waiting for host to start the next round...</p>
     </section>
+    <section id="game-over-screen" hidden>
+      <h2>GAME OVER</h2>
+      <h3 id="winner-label"></h3>
+      <p id="winners"></p>
+      <h3>Final Leaderboard</h3>
+      <table>
+        <thead>
+          <tr><th>Rank</th><th>Player</th><th>Round Score</th><th>Total Score</th><th>Correct Guesses</th><th>Times Fooled Partner</th></tr>
+        </thead>
+        <tbody id="final-rows"></tbody>
+      </table>
+      <p>Best Detective: <span id="best-detectives"></span></p>
+      <p>Most Mysterious: <span id="most-mysterious"></span></p>
+      <button type="button" id="back-home">Back to Home</button>
+    </section>
     <script src="/socket.io/socket.io.js"></script>
     <script src="script.js"></script>
   </body>

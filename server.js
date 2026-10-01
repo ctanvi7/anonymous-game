@@ -119,26 +119,50 @@ function revealForPlayer(room, player) {
 }
 
 function scoreRound(room) {
-  if (room.scoredRound === room.round) return;
+  if (room.scoredRound >= room.round) return;
   for (const player of room.players) {
     const result = revealForPlayer(room, player);
     player.roundScore = (result.correct ? 100 : 0) + (result.partnerCorrect ? 0 : 50);
     player.totalScore += player.roundScore;
+    if (result.correct) player.correctGuesses += 1;
+    if (!result.partnerCorrect) player.timesFooledPartner += 1;
   }
   room.scoredRound = room.round;
+}
+
+function compareScores(a, b) {
+  return b.totalScore - a.totalScore ||
+    b.roundScore - a.roundScore || a.name.localeCompare(b.name);
 }
 
 function scoreboardForPlayer(room, player) {
   const rows = room.players.map(({ name, roundScore, totalScore }) => ({
     name, roundScore, totalScore
   }));
-  rows.sort((a, b) => b.totalScore - a.totalScore ||
-    b.roundScore - a.roundScore || a.name.localeCompare(b.name));
+  rows.sort(compareScores);
   return {
     round: room.round,
     totalRounds: room.settings.totalRounds,
     rows,
     isHost: player.isHost
+  };
+}
+
+function finalResults(room) {
+  const ranked = [...room.players].sort(compareScores);
+  const highestScore = ranked[0].totalScore;
+  const mostCorrect = Math.max(...ranked.map((player) => player.correctGuesses));
+  const mostFooled = Math.max(...ranked.map((player) => player.timesFooledPartner));
+  return {
+    winners: ranked.filter((player) => player.totalScore === highestScore)
+      .map((player) => player.name),
+    rows: ranked.map(({ name, roundScore, totalScore, correctGuesses, timesFooledPartner }) => ({
+      name, roundScore, totalScore, correctGuesses, timesFooledPartner
+    })),
+    bestDetectives: ranked.filter((player) => player.correctGuesses === mostCorrect)
+      .map((player) => player.name),
+    mostMysterious: ranked.filter((player) => player.timesFooledPartner === mostFooled)
+      .map((player) => player.name)
   };
 }
 
@@ -218,7 +242,8 @@ app.post("/api/rooms", (req, res) => {
   const playerId = randomUUID();
   rooms[roomCode] = {
     hostName: name,
-    players: [{ id: playerId, name, isHost: true, roundScore: 0, totalScore: 0 }],
+    players: [{ id: playerId, name, isHost: true, roundScore: 0, totalScore: 0,
+      correctGuesses: 0, timesFooledPartner: 0 }],
     settings: { chatDuration, totalRounds },
     round: 0,
     scoredRound: 0,
@@ -249,6 +274,7 @@ io.on("connection", (socket) => {
     if (room.phase === "guessing") return reply({ guessing: guessingForPlayer(room, player) });
     if (room.phase === "reveal") return reply({ reveal: revealForPlayer(room, player) });
     if (room.phase === "scoreboard") return reply({ scoreboard: scoreboardForPlayer(room, player) });
+    if (room.phase === "game_over") return reply({ gameOver: finalResults(room) });
     reply({ room: publicRoom(roomCode) });
   });
 
@@ -268,7 +294,8 @@ io.on("connection", (socket) => {
     }
 
     const playerId = randomUUID();
-    room.players.push({ id: playerId, name: playerName, isHost: false, roundScore: 0, totalScore: 0 });
+    room.players.push({ id: playerId, name: playerName, isHost: false, roundScore: 0,
+      totalScore: 0, correctGuesses: 0, timesFooledPartner: 0 });
     socket.join(code);
     socket.data.roomCode = code;
     socket.data.playerId = playerId;
@@ -360,9 +387,20 @@ io.on("connection", (socket) => {
     if (room.phase === "scoreboard") {
       return reply({ scoreboard: scoreboardForPlayer(room, player) });
     }
+    if (room.phase === "game_over") return reply({ gameOver: finalResults(room) });
     if (room.phase !== "reveal") return reply({ error: "The reveal is not complete yet." });
 
     scoreRound(room);
+    if (room.round === room.settings.totalRounds) {
+      room.phase = "game_over";
+      for (const socketId of io.sockets.adapter.rooms.get(roomCode) || []) {
+        const playerSocket = io.sockets.sockets.get(socketId);
+        if (room.players.some((member) => member.id === playerSocket?.data.playerId)) {
+          playerSocket.emit("gameOver", finalResults(room));
+        }
+      }
+      return reply({ ok: true });
+    }
     room.phase = "scoreboard";
     for (const socketId of io.sockets.adapter.rooms.get(roomCode) || []) {
       const playerSocket = io.sockets.sockets.get(socketId);
@@ -378,8 +416,8 @@ io.on("connection", (socket) => {
     const room = rooms[roomCode];
     const player = room?.players.find((member) => member.id === socket.data.playerId);
     if (!player?.isHost) return reply({ error: "Only the host can start the next round." });
-    if (room.phase !== "scoreboard") return reply({ error: "The next round cannot start yet." });
     if (room.round >= room.settings.totalRounds) return reply({ error: "All rounds are complete." });
+    if (room.phase !== "scoreboard") return reply({ error: "The next round cannot start yet." });
 
     beginRound(roomCode);
     reply({ ok: true });

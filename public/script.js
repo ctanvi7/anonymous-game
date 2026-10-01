@@ -7,6 +7,7 @@ const identityScreen = document.querySelector("#identity-screen");
 const guessingScreen = document.querySelector("#guessing-screen");
 const revealScreen = document.querySelector("#reveal-screen");
 const scoreboardScreen = document.querySelector("#scoreboard-screen");
+const gameOverScreen = document.querySelector("#game-over-screen");
 const createForm = document.querySelector("#create-form");
 const joinForm = document.querySelector("#join-form");
 const chatForm = document.querySelector("#chat-form");
@@ -89,6 +90,7 @@ function showIdentity(identity) {
   guessingScreen.hidden = true;
   revealScreen.hidden = true;
   scoreboardScreen.hidden = true;
+  gameOverScreen.hidden = true;
   identityScreen.hidden = false;
 }
 
@@ -129,6 +131,7 @@ function showGuessing(state) {
   identityScreen.hidden = true;
   revealScreen.hidden = true;
   scoreboardScreen.hidden = true;
+  gameOverScreen.hidden = true;
   guessingScreen.hidden = false;
 }
 
@@ -150,6 +153,7 @@ function showReveal(result) {
   identityScreen.hidden = true;
   guessingScreen.hidden = true;
   scoreboardScreen.hidden = true;
+  gameOverScreen.hidden = true;
   revealScreen.hidden = false;
 }
 
@@ -185,7 +189,38 @@ function showScoreboard(scoreboard) {
   identityScreen.hidden = true;
   guessingScreen.hidden = true;
   revealScreen.hidden = true;
+  gameOverScreen.hidden = true;
   scoreboardScreen.hidden = false;
+}
+
+function showGameOver(results) {
+  clearInterval(countdownInterval);
+  document.querySelector("#winner-label").textContent =
+    results.winners.length === 1 ? "Winner:" : "WINNERS";
+  document.querySelector("#winners").textContent = results.winners.join(" & ");
+  const rows = document.querySelector("#final-rows");
+  rows.replaceChildren();
+  results.rows.forEach((player, index) => {
+    const row = document.createElement("tr");
+    for (const value of [index + 1, player.name, `+${player.roundScore}`, player.totalScore,
+      player.correctGuesses, player.timesFooledPartner]) {
+      const cell = document.createElement("td");
+      cell.textContent = value;
+      row.append(cell);
+    }
+    rows.append(row);
+  });
+  document.querySelector("#best-detectives").textContent = results.bestDetectives.join(" & ");
+  document.querySelector("#most-mysterious").textContent = results.mostMysterious.join(" & ");
+  home.hidden = true;
+  createScreen.hidden = true;
+  joinScreen.hidden = true;
+  lobby.hidden = true;
+  identityScreen.hidden = true;
+  guessingScreen.hidden = true;
+  revealScreen.hidden = true;
+  scoreboardScreen.hidden = true;
+  gameOverScreen.hidden = false;
 }
 
 socket.on("roomUpdated", showLobby);
@@ -195,6 +230,7 @@ socket.on("chatEnded", showGuessing);
 socket.on("guessProgress", showGuessProgress);
 socket.on("revealResult", showReveal);
 socket.on("scoreboardReady", showScoreboard);
+socket.on("gameOver", showGameOver);
 socket.on("connect", () => {
   if (currentRoomCode && currentPlayerId) {
     socket.emit("enterRoom", { roomCode: currentRoomCode, playerId: currentPlayerId }, (result) => {
@@ -203,6 +239,7 @@ socket.on("connect", () => {
       if (result.guessing) showGuessing(result.guessing);
       if (result.reveal) showReveal(result.reveal);
       if (result.scoreboard) showScoreboard(result.scoreboard);
+      if (result.gameOver) showGameOver(result.gameOver);
       if (result.error) {
         sessionStorage.removeItem("roomCode");
         sessionStorage.removeItem("playerId");
@@ -325,6 +362,7 @@ document.querySelector("#continue-to-scoreboard").addEventListener("click", () =
   socket.emit("continueToScoreboard", (result) => {
     if (result.error) error.textContent = result.error;
     if (result.scoreboard) showScoreboard(result.scoreboard);
+    if (result.gameOver) showGameOver(result.gameOver);
   });
 });
 
@@ -334,4 +372,11 @@ document.querySelector("#next-round").addEventListener("click", () => {
   socket.emit("nextRound", (result) => {
     if (result.error) error.textContent = result.error;
   });
+});
+
+document.querySelector("#back-home").addEventListener("click", () => {
+  sessionStorage.removeItem("roomCode");
+  sessionStorage.removeItem("playerId");
+  sessionStorage.removeItem("playerName");
+  window.location.reload();
 });
