@@ -12,26 +12,25 @@ const createForm = document.querySelector("#create-form");
 const joinForm = document.querySelector("#join-form");
 const chatForm = document.querySelector("#chat-form");
 const guessForm = document.querySelector("#guess-form");
-let currentRoomCode = sessionStorage.getItem("roomCode");
-let currentPlayerId = sessionStorage.getItem("playerId");
-let currentPlayerName = sessionStorage.getItem("playerName");
+let currentRoomCode = localStorage.getItem("roomCode");
+let currentReconnectToken = localStorage.getItem("reconnectToken");
+let currentIsHost = false;
 let currentAlias;
 let currentRound;
 let countdownInterval;
 
 function savePlayer() {
-  sessionStorage.setItem("roomCode", currentRoomCode);
-  sessionStorage.setItem("playerId", currentPlayerId);
-  sessionStorage.setItem("playerName", currentPlayerName);
+  localStorage.setItem("roomCode", currentRoomCode);
+  localStorage.setItem("reconnectToken", currentReconnectToken);
 }
 
-function showLobby(room) {
+function renderLobby(room) {
   document.querySelector("#room-code").textContent = room.roomCode;
   const playerList = document.querySelector("#player-list");
   playerList.replaceChildren();
   for (const player of room.players) {
     const item = document.createElement("li");
-    item.textContent = `${player.name} `;
+    item.textContent = `${player.name}${player.left ? " (left)" : player.connected ? "" : " (disconnected)"} `;
     if (player.isHost) {
       const badge = document.createElement("span");
       badge.className = "host-badge";
@@ -42,11 +41,33 @@ function showLobby(room) {
   }
   document.querySelector("#lobby-duration").textContent = room.settings.chatDuration;
   document.querySelector("#lobby-rounds").textContent = room.settings.totalRounds;
-  document.querySelector("#start-game").hidden = !room.players.some((player) => player.isHost && player.name === currentPlayerName);
+  currentIsHost = Boolean(room.isHost);
+  document.querySelector("#start-game").hidden = !currentIsHost;
+}
+
+function showLobby(room) {
+  renderLobby(room);
+  setPartnerStatus(null);
+  setRoundBlocked(false);
   home.hidden = true;
   createScreen.hidden = true;
   joinScreen.hidden = true;
   lobby.hidden = false;
+}
+
+function setPartnerStatus(status) {
+  const banner = document.querySelector("#partner-status");
+  banner.textContent = status === "disconnected"
+    ? "Your partner disconnected. Waiting for them to reconnect..."
+    : status === "left" ? "Your partner left the game." : "";
+  banner.hidden = !banner.textContent;
+}
+
+function setRoundBlocked(blocked) {
+  const controls = document.querySelector("#round-control");
+  controls.dataset.blocked = String(blocked);
+  controls.hidden = !blocked || !currentIsHost;
+  document.querySelector("#skip-round-error").textContent = "";
 }
 
 function showMessage(message) {
@@ -58,6 +79,7 @@ function showMessage(message) {
 }
 
 function showIdentity(identity) {
+  setPartnerStatus(identity.partnerStatus);
   currentAlias = identity.alias;
   currentRound = identity.round;
   document.querySelector("#my-alias").textContent = identity.alias;
@@ -158,6 +180,7 @@ function showReveal(result) {
 }
 
 function showScoreboard(scoreboard) {
+  setRoundBlocked(false);
   currentRound = scoreboard.round;
   document.querySelector("#round-complete").textContent = `Round ${scoreboard.round} Complete`;
   document.querySelector("#scoreboard-round").textContent =
@@ -194,6 +217,8 @@ function showScoreboard(scoreboard) {
 }
 
 function showGameOver(results) {
+  setRoundBlocked(false);
+  setPartnerStatus(null);
   clearInterval(countdownInterval);
   document.querySelector("#winner-label").textContent =
     results.winners.length === 1 ? "Winner:" : "WINNERS";
@@ -223,7 +248,10 @@ function showGameOver(results) {
   gameOverScreen.hidden = false;
 }
 
-socket.on("roomUpdated", showLobby);
+socket.on("roomUpdated", (room) => {
+  if (!lobby.hidden) renderLobby(room);
+  else currentIsHost = Boolean(room.isHost);
+});
 socket.on("gameStarted", showIdentity);
 socket.on("chatMessage", showMessage);
 socket.on("chatEnded", showGuessing);
@@ -231,9 +259,25 @@ socket.on("guessProgress", showGuessProgress);
 socket.on("revealResult", showReveal);
 socket.on("scoreboardReady", showScoreboard);
 socket.on("gameOver", showGameOver);
+socket.on("partnerStatus", setPartnerStatus);
+socket.on("roundBlocked", () => setRoundBlocked(true));
+socket.on("hostStatus", (state) => {
+  currentIsHost = state.isHost;
+  document.querySelector("#start-game").hidden = !currentIsHost;
+  const scoreboard = document.querySelector("#scoreboard-screen");
+  if (!scoreboard.hidden) {
+    const next = document.querySelector("#next-round");
+    next.hidden = !currentIsHost;
+    document.querySelector("#waiting-for-host").hidden = currentIsHost;
+  }
+  setRoundBlocked(document.querySelector("#round-control").dataset.blocked === "true");
+});
 socket.on("connect", () => {
-  if (currentRoomCode && currentPlayerId) {
-    socket.emit("enterRoom", { roomCode: currentRoomCode, playerId: currentPlayerId }, (result) => {
+  if (currentRoomCode && currentReconnectToken) {
+    socket.emit("enterRoom", { roomCode: currentRoomCode, reconnectToken: currentReconnectToken }, (result) => {
+      if (result.isHost !== undefined) currentIsHost = result.isHost;
+      setPartnerStatus(result.partnerStatus);
+      setRoundBlocked(Boolean(result.roundBlocked));
       if (result.room) showLobby(result.room);
       if (result.identity) showIdentity(result.identity);
       if (result.guessing) showGuessing(result.guessing);
@@ -241,10 +285,10 @@ socket.on("connect", () => {
       if (result.scoreboard) showScoreboard(result.scoreboard);
       if (result.gameOver) showGameOver(result.gameOver);
       if (result.error) {
-        sessionStorage.removeItem("roomCode");
-        sessionStorage.removeItem("playerId");
-        sessionStorage.removeItem("playerName");
-        currentRoomCode = currentPlayerId = currentPlayerName = null;
+        localStorage.removeItem("roomCode");
+        localStorage.removeItem("reconnectToken");
+        currentRoomCode = currentReconnectToken = null;
+        window.location.reload();
       }
     });
   }
@@ -286,10 +330,9 @@ createForm.addEventListener("submit", async (event) => {
     if (!response.ok) throw new Error(created.error || "Could not create room.");
 
     currentRoomCode = created.roomCode;
-    currentPlayerId = created.playerId;
-    currentPlayerName = name;
+    currentReconnectToken = created.reconnectToken;
     savePlayer();
-    socket.emit("enterRoom", { roomCode: currentRoomCode, playerId: currentPlayerId }, (result) => {
+    socket.emit("enterRoom", { roomCode: currentRoomCode, reconnectToken: currentReconnectToken }, (result) => {
       if (result.error) error.textContent = result.error;
       else showLobby(result.room);
     });
@@ -315,8 +358,7 @@ joinForm.addEventListener("submit", (event) => {
       return;
     }
     currentRoomCode = result.room.roomCode;
-    currentPlayerId = result.playerId;
-    currentPlayerName = name;
+    currentReconnectToken = result.reconnectToken;
     savePlayer();
     showLobby(result.room);
   });
@@ -335,7 +377,7 @@ chatForm.addEventListener("submit", (event) => {
   const input = document.querySelector("#message-input");
   const error = document.querySelector("#chat-error");
   error.textContent = "";
-  socket.emit("sendMessage", input.value, currentRound, (result) => {
+  socket.emit("sendMessage", input.value, (result) => {
     if (result.error) error.textContent = result.error;
     else input.value = "";
   });
@@ -375,8 +417,16 @@ document.querySelector("#next-round").addEventListener("click", () => {
 });
 
 document.querySelector("#back-home").addEventListener("click", () => {
-  sessionStorage.removeItem("roomCode");
-  sessionStorage.removeItem("playerId");
-  sessionStorage.removeItem("playerName");
+  localStorage.removeItem("roomCode");
+  localStorage.removeItem("reconnectToken");
   window.location.reload();
+});
+
+document.querySelector("#skip-round").addEventListener("click", () => {
+  const error = document.querySelector("#skip-round-error");
+  error.textContent = "";
+  socket.emit("skipRound", (result) => {
+    if (result.error) error.textContent = result.error;
+    else setRoundBlocked(false);
+  });
 });

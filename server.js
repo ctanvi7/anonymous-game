@@ -1,6 +1,6 @@
 const express = require("express");
 const path = require("path");
-const { randomInt, randomUUID } = require("crypto");
+const { createHash, randomBytes, randomInt, randomUUID, timingSafeEqual } = require("crypto");
 const { createServer } = require("http");
 const { Server } = require("socket.io");
 
@@ -9,7 +9,11 @@ const server = createServer(app);
 const io = new Server(server);
 const port = 3000;
 const rooms = Object.create(null);
+const disconnectGraceMs = 60 * 1000;
+const abandonedRoomCleanupMs = 5 * 60 * 1000;
+const MAX_PLAYERS = 12;
 const codeCharacters = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+const roomCodePattern = /^[A-HJ-NP-Z2-9]{5}$/;
 const aliases = [
   "NeonToast", "SilentPanda", "CrimsonFox", "MangoWizard",
   "CosmicPenguin", "VelvetTiger", "PixelGhost", "LunarKoala",
@@ -21,9 +25,188 @@ function publicRoom(roomCode) {
   const room = rooms[roomCode];
   return {
     roomCode,
-    players: room.players.map(({ name, isHost }) => ({ name, isHost })),
+    players: room.players.map(({ name, isHost, connected, left }) => ({ name, isHost, connected, left })),
     settings: room.settings
   };
+}
+
+function tokenHash(token) {
+  return createHash("sha256").update(token).digest();
+}
+
+function playerForSocket(room, socket) {
+  const player = room?.players.find((member) => member.id === socket?.data?.playerId);
+  return player?.connected && player.socketId === socket.id ? player : null;
+}
+
+function requireRoomPhase(room, phases, reply, message = "That action is not available right now.") {
+  if (phases.includes(room.phase)) return true;
+  reply({ error: message });
+  return false;
+}
+
+function actionContext(socket, reply, phases, hostOnly = false) {
+  const roomCode = socket?.data?.roomCode;
+  const room = rooms[roomCode];
+  const player = playerForSocket(room, socket);
+  if (!room || !player) {
+    reply({ error: "You are not in a valid room." });
+    return null;
+  }
+  if (!requireRoomPhase(room, phases, reply)) return null;
+  if (hostOnly && !player.isHost) {
+    reply({ error: "Only the host can do that." });
+    return null;
+  }
+  return { roomCode, room, player };
+}
+
+function cleanPlayerName(value) {
+  if (typeof value !== "string") return null;
+  const name = value.trim();
+  if (!name || name.length > 30 || /[\u0000-\u001f\u007f-\u009f]/.test(name)) return null;
+  return name;
+}
+
+function deleteRoom(roomCode) {
+  const room = rooms[roomCode];
+  if (!room) return;
+  clearTimeout(room.chatTimer);
+  clearTimeout(room.emptyTimer);
+  for (const player of room.players) clearTimeout(player.disconnectTimer);
+  delete rooms[roomCode];
+}
+
+function scheduleEmptyRoomCleanup(roomCode) {
+  const room = rooms[roomCode];
+  if (!room || room.players.some((player) => player.connected && !player.left)) return;
+  clearTimeout(room.emptyTimer);
+  room.emptyTimer = setTimeout(() => {
+    const current = rooms[roomCode];
+    if (current && !current.players.some((player) => player.connected && !player.left)) {
+      deleteRoom(roomCode);
+    }
+  }, abandonedRoomCleanupMs);
+}
+
+function roomView(roomCode, player) {
+  return { ...publicRoom(roomCode), isHost: Boolean(player?.isHost) };
+}
+
+function broadcastRoom(roomCode) {
+  const room = rooms[roomCode];
+  for (const socketId of io.sockets.adapter.rooms.get(roomCode) || []) {
+    const socket = io.sockets.sockets.get(socketId);
+    const player = playerForSocket(room, socket);
+    if (player) socket.emit("roomUpdated", roomView(roomCode, player));
+  }
+}
+
+function notifyHostStatus(roomCode) {
+  const room = rooms[roomCode];
+  for (const socketId of io.sockets.adapter.rooms.get(roomCode) || []) {
+    const socket = io.sockets.sockets.get(socketId);
+    const player = playerForSocket(room, socket);
+    if (player) socket.emit("hostStatus", { isHost: player.isHost });
+  }
+}
+
+function partnerStatus(room, player) {
+  const pair = room.pairs?.find(({ player1Id, player2Id }) =>
+    player1Id === player.id || player2Id === player.id
+  );
+  if (!pair) return null;
+  const partnerId = pair.player1Id === player.id ? pair.player2Id : pair.player1Id;
+  const partner = room.players.find((member) => member.id === partnerId);
+  return partner?.left ? "left" : partner?.connected ? "connected" : "disconnected";
+}
+
+function notifyPartnerStatus(room, player) {
+  const pair = room.pairs?.find(({ player1Id, player2Id }) =>
+    player1Id === player.id || player2Id === player.id
+  );
+  if (!pair) return;
+  const partnerId = pair.player1Id === player.id ? pair.player2Id : pair.player1Id;
+  const partner = room.players.find((member) => member.id === partnerId);
+  const partnerSocket = partner?.socketId && io.sockets.sockets.get(partner.socketId);
+  if (partnerSocket && partner.connected && !partner.left) {
+    partnerSocket.emit("partnerStatus", partnerStatus(room, partner));
+  }
+}
+
+function assignNewHost(roomCode) {
+  const room = rooms[roomCode];
+  if (room.players.some((player) => player.isHost && player.connected && !player.left)) return false;
+  const nextHost = room.players.find((player) => player.connected && !player.left);
+  if (!nextHost) return false;
+  room.players.forEach((player) => { player.isHost = player.id === nextHost.id; });
+  notifyHostStatus(roomCode);
+  return true;
+}
+
+function removeDisconnectedPlayer(roomCode, playerId) {
+  const room = rooms[roomCode];
+  const player = room?.players.find((member) => member.id === playerId);
+  if (!player || player.connected || player.left) return;
+  player.disconnectTimer = null;
+  player.left = true;
+  if (room.phase === "lobby") room.players = room.players.filter((member) => member.id !== playerId);
+  else if (room.phase === "chat" ||
+    (room.phase === "guessing" && !Object.hasOwn(room.guesses, player.id))) {
+    room.roundBlocked = true;
+  }
+  if (room.phase === "guessing") {
+    for (const member of room.players) {
+      if (!Object.hasOwn(room.guesses, member.id)) {
+        room.guessOptions[member.id] = (room.guessOptions[member.id] || [])
+          .filter((option) => option.id !== player.id);
+      }
+    }
+  }
+  notifyPartnerStatus(room, player);
+  assignNewHost(roomCode);
+  broadcastRoom(roomCode);
+  if (room.roundBlocked) io.to(roomCode).emit("roundBlocked", { isHostActionAvailable: true });
+  scheduleEmptyRoomCleanup(roomCode);
+}
+
+function restoreRoomState(room, player) {
+  if (room.phase === "chat" && Date.now() >= room.chatEndsAt) endChat(room.roomCode, room.round);
+  const status = partnerStatus(room, player);
+  const state = room.phase === "chat"
+    ? { identity: { ...matchForPlayer(room, player), partnerStatus: status } }
+    : room.phase === "guessing" ? { guessing: guessingForPlayer(room, player) }
+      : room.phase === "reveal" ? { reveal: revealForPlayer(room, player) }
+        : room.phase === "scoreboard" ? { scoreboard: scoreboardForPlayer(room, player) }
+          : room.phase === "game_over" ? { gameOver: finalResults(room) }
+            : { room: roomView(room.roomCode, player) };
+  return { ...state, partnerStatus: status, roundBlocked: Boolean(room.roundBlocked), isHost: player.isHost };
+}
+
+function skipBlockedRound(roomCode) {
+  const room = rooms[roomCode];
+  clearTimeout(room.chatTimer);
+  room.chatTimer = null;
+  room.chatStartedAt = null;
+  room.chatEndsAt = null;
+  room.roundBlocked = false;
+  room.scoredRound = room.round;
+  for (const player of room.players) player.roundScore = 0;
+  const remaining = room.players.filter((player) => !player.left);
+  if (room.round >= room.settings.totalRounds || remaining.length < 2 || remaining.length % 2) {
+    room.phase = "game_over";
+    for (const socketId of io.sockets.adapter.rooms.get(roomCode) || []) {
+      const socket = io.sockets.sockets.get(socketId);
+      if (playerForSocket(room, socket)) socket.emit("gameOver", finalResults(room));
+    }
+    return;
+  }
+  room.phase = "scoreboard";
+  for (const socketId of io.sockets.adapter.rooms.get(roomCode) || []) {
+    const socket = io.sockets.sockets.get(socketId);
+    const player = playerForSocket(room, socket);
+    if (player) socket.emit("scoreboardReady", scoreboardForPlayer(room, player));
+  }
 }
 
 function matchForPlayer(room, player) {
@@ -43,7 +226,8 @@ function matchForPlayer(room, player) {
     messages: pair.messages.map(({ senderId, text }) => ({
       senderAlias: room.players.find((member) => member.id === senderId).alias,
       text
-    }))
+    })),
+    partnerStatus: partnerStatus(room, player)
   };
 }
 
@@ -119,7 +303,7 @@ function revealForPlayer(room, player) {
 }
 
 function scoreRound(room) {
-  if (room.scoredRound >= room.round) return;
+  if (room.phase !== "reveal" || room.round < 1 || room.scoredRound >= room.round) return false;
   for (const player of room.players) {
     const result = revealForPlayer(room, player);
     player.roundScore = (result.correct ? 100 : 0) + (result.partnerCorrect ? 0 : 50);
@@ -128,6 +312,7 @@ function scoreRound(room) {
     if (!result.partnerCorrect) player.timesFooledPartner += 1;
   }
   room.scoredRound = room.round;
+  return true;
 }
 
 function compareScores(a, b) {
@@ -150,6 +335,9 @@ function scoreboardForPlayer(room, player) {
 
 function finalResults(room) {
   const ranked = [...room.players].sort(compareScores);
+  if (ranked.length === 0) {
+    return { winners: [], rows: [], bestDetectives: [], mostMysterious: [] };
+  }
   const highestScore = ranked[0].totalScore;
   const mostCorrect = Math.max(...ranked.map((player) => player.correctGuesses));
   const mostFooled = Math.max(...ranked.map((player) => player.timesFooledPartner));
@@ -168,6 +356,7 @@ function finalResults(room) {
 
 function beginRound(roomCode) {
   const room = rooms[roomCode];
+  if (!room) return false;
   clearTimeout(room.chatTimer);
   room.chatTimer = null;
   room.chatStartedAt = null;
@@ -192,45 +381,49 @@ function beginRound(roomCode) {
   room.phase = "chat";
   room.chatStartedAt = Date.now();
   room.chatEndsAt = room.chatStartedAt + room.settings.chatDuration * 60 * 1000;
-  room.chatTimer = setTimeout(() => endChat(roomCode), room.chatEndsAt - room.chatStartedAt);
+  const timerRound = room.round;
+  room.chatTimer = setTimeout(() => endChat(roomCode, timerRound), room.chatEndsAt - room.chatStartedAt);
 
   for (const socketId of io.sockets.adapter.rooms.get(roomCode) || []) {
     const playerSocket = io.sockets.sockets.get(socketId);
-    const player = room.players.find((member) => member.id === playerSocket?.data.playerId);
+    const player = playerForSocket(room, playerSocket);
     if (player) playerSocket.emit("gameStarted", matchForPlayer(room, player));
   }
+  return true;
 }
 
-function endChat(roomCode) {
+function endChat(roomCode, expectedRound) {
   const room = rooms[roomCode];
-  if (!room || room.phase !== "chat") return;
+  if (!room || room.phase !== "chat" || room.round !== expectedRound) return false;
   clearTimeout(room.chatTimer);
   room.chatTimer = null;
+  room.chatStartedAt = null;
   room.phase = "guessing";
   room.guesses = Object.create(null);
   room.guessOptions = Object.create(null);
   for (const player of room.players) {
     room.guessOptions[player.id] = shuffledChoices(
-      room.players.filter((other) => other.id !== player.id)
+      room.players.filter((other) => other.id !== player.id && !other.left)
         .map(({ id, name }) => ({ id, name }))
     );
   }
   for (const socketId of io.sockets.adapter.rooms.get(roomCode) || []) {
     const playerSocket = io.sockets.sockets.get(socketId);
-    const player = room.players.find((member) => member.id === playerSocket?.data.playerId);
+    const player = playerForSocket(room, playerSocket);
     if (player) playerSocket.emit("chatEnded", guessingForPlayer(room, player));
   }
+  return true;
 }
 
 app.use(express.json());
 app.use(express.static(path.join(__dirname, "public")));
 
 app.post("/api/rooms", (req, res) => {
-  const name = typeof req.body?.name === "string" ? req.body.name.trim() : "";
-  const chatDuration = Number(req.body?.chatDuration);
-  const totalRounds = Number(req.body?.totalRounds);
+  const name = cleanPlayerName(req.body?.name);
+  const chatDuration = req.body?.chatDuration;
+  const totalRounds = req.body?.totalRounds;
 
-  if (!name || name.length > 30 || ![2, 3, 5].includes(chatDuration) || ![1, 3, 5].includes(totalRounds)) {
+  if (!name || ![2, 3, 5].includes(chatDuration) || ![1, 3, 5].includes(totalRounds)) {
     return res.status(400).json({ error: "Enter a name and choose valid room settings." });
   }
 
@@ -242,92 +435,156 @@ app.post("/api/rooms", (req, res) => {
   const playerId = randomUUID();
   rooms[roomCode] = {
     hostName: name,
-    players: [{ id: playerId, name, isHost: true, roundScore: 0, totalScore: 0,
-      correctGuesses: 0, timesFooledPartner: 0 }],
+    players: [{ id: playerId, name, tokenHash: null, isHost: true,
+      connected: false, socketId: null, disconnectedAt: null, disconnectTimer: null,
+      left: false, roundScore: 0, totalScore: 0, correctGuesses: 0, timesFooledPartner: 0 }],
+    roomCode,
     settings: { chatDuration, totalRounds },
     round: 0,
     scoredRound: 0,
+    roundBlocked: false,
     pairHistory: new Set(),
+    chatTimer: null,
+    emptyTimer: null,
     phase: "lobby"
   };
 
-  res.status(201).json({ roomCode, playerId });
+  const reconnectToken = randomBytes(32).toString("base64url");
+  rooms[roomCode].players[0].tokenHash = tokenHash(reconnectToken);
+  scheduleEmptyRoomCleanup(roomCode);
+  res.status(201).json({ roomCode, reconnectToken });
+});
+
+app.use((error, req, res, next) => {
+  console.error("Request rejected:", error.message);
+  if (res.headersSent) return next(error);
+  res.status(400).json({ error: "Invalid request." });
 });
 
 io.on("connection", (socket) => {
   socket.on("enterRoom", (data, reply) => {
     if (typeof reply !== "function") return;
-    const { roomCode, playerId } = data && typeof data === "object" ? data : {};
+    const { roomCode: requestedRoomCode, reconnectToken } = data && typeof data === "object" ? data : {};
+    const roomCode = typeof requestedRoomCode === "string" && roomCodePattern.test(requestedRoomCode)
+      ? requestedRoomCode : "";
     const room = rooms[roomCode];
-    const player = room?.players.find((player) => player.id === playerId);
+    const suppliedHash = typeof reconnectToken === "string" && reconnectToken.length === 43
+      ? tokenHash(reconnectToken) : Buffer.alloc(32);
+    const player = room?.players.find((member) => {
+      if (member.left || !member.tokenHash) return false;
+      return timingSafeEqual(member.tokenHash, suppliedHash);
+    });
     if (!player) {
-      return reply({ error: "Room or player not found." });
+      return reply({ error: "Room or reconnect token not found." });
+    }
+    const currentPlayer = playerForSocket(rooms[socket.data.roomCode], socket);
+    if (currentPlayer && currentPlayer.id !== player.id) {
+      return reply({ error: "This connection already belongs to another player." });
     }
 
+    if (player.disconnectedAt && Date.now() - player.disconnectedAt >= disconnectGraceMs) {
+      removeDisconnectedPlayer(roomCode, player.id);
+      return reply({ error: "The reconnect period has expired." });
+    }
+    clearTimeout(player.disconnectTimer);
+    clearTimeout(room.emptyTimer);
+    room.emptyTimer = null;
+    player.disconnectTimer = null;
+    const previousSocket = player.socketId && io.sockets.sockets.get(player.socketId);
+    player.connected = true;
+    player.socketId = socket.id;
+    player.disconnectedAt = null;
+    player.left = false;
     socket.join(roomCode);
     socket.data.roomCode = roomCode;
-    socket.data.playerId = playerId;
-    if (room.phase === "chat" && Date.now() >= room.chatEndsAt) endChat(roomCode);
-    if (room.phase === "chat") {
-      return reply({ identity: matchForPlayer(room, player) });
-    }
-    if (room.phase === "guessing") return reply({ guessing: guessingForPlayer(room, player) });
-    if (room.phase === "reveal") return reply({ reveal: revealForPlayer(room, player) });
-    if (room.phase === "scoreboard") return reply({ scoreboard: scoreboardForPlayer(room, player) });
-    if (room.phase === "game_over") return reply({ gameOver: finalResults(room) });
-    reply({ room: publicRoom(roomCode) });
+    socket.data.playerId = player.id;
+    if (previousSocket && previousSocket.id !== socket.id) previousSocket.disconnect(true);
+    const state = restoreRoomState(room, player);
+    if (state.room) state.room.reconnectToken = reconnectToken;
+    notifyPartnerStatus(room, player);
+    broadcastRoom(roomCode);
+    reply(state);
   });
 
   socket.on("joinRoom", (data, reply) => {
     if (typeof reply !== "function") return;
+    if (playerForSocket(rooms[socket.data.roomCode], socket)) {
+      return reply({ error: "This connection already belongs to a player." });
+    }
     const { name, roomCode } = data && typeof data === "object" ? data : {};
-    const playerName = typeof name === "string" ? name.trim() : "";
+    const playerName = cleanPlayerName(name);
     const code = typeof roomCode === "string" ? roomCode.trim().toUpperCase() : "";
-    if (!playerName || playerName.length > 30) {
+    if (!playerName) {
       return reply({ error: "Please enter a player name (up to 30 characters)." });
     }
+    if (!roomCodePattern.test(code)) return reply({ error: "Enter a valid 5-character room code." });
     const room = rooms[code];
     if (!room) return reply({ error: "Room not found. Check the room code." });
-    if (room.phase !== "lobby") return reply({ error: "This game has already started." });
+    if (!requireRoomPhase(room, ["lobby"], reply, "This game has already started.")) return;
+    if (room.players.length >= MAX_PLAYERS) return reply({ error: "This room is full." });
     if (room.players.some((player) => player.name.toLowerCase() === playerName.toLowerCase())) {
       return reply({ error: "That player name is already taken in this room." });
     }
 
     const playerId = randomUUID();
-    room.players.push({ id: playerId, name: playerName, isHost: false, roundScore: 0,
-      totalScore: 0, correctGuesses: 0, timesFooledPartner: 0 });
+    const reconnectToken = randomBytes(32).toString("base64url");
+    const player = { id: playerId, name: playerName, tokenHash: tokenHash(reconnectToken),
+      isHost: false, connected: true, socketId: socket.id, disconnectedAt: null,
+      disconnectTimer: null, left: false, roundScore: 0, totalScore: 0,
+      correctGuesses: 0, timesFooledPartner: 0 };
+    clearTimeout(room.emptyTimer);
+    room.emptyTimer = null;
+    room.players.push(player);
     socket.join(code);
     socket.data.roomCode = code;
     socket.data.playerId = playerId;
-    const visibleRoom = publicRoom(code);
-    reply({ room: visibleRoom, playerId });
-    socket.to(code).emit("roomUpdated", visibleRoom);
+    reply({ room: roomView(code, player), reconnectToken });
+    broadcastRoom(code);
+  });
+
+  socket.on("disconnect", () => {
+    const roomCode = socket.data.roomCode;
+    const room = rooms[roomCode];
+    const player = room?.players.find((member) => member.id === socket.data.playerId);
+    if (!player || player.socketId !== socket.id || !player.connected) return;
+    player.connected = false;
+    player.socketId = null;
+    player.disconnectedAt = Date.now();
+    player.disconnectTimer = setTimeout(
+      () => removeDisconnectedPlayer(roomCode, player.id), disconnectGraceMs
+    );
+    notifyPartnerStatus(room, player);
+    broadcastRoom(roomCode);
   });
 
   socket.on("startGame", (reply) => {
     if (typeof reply !== "function") return;
-    const roomCode = socket.data.roomCode;
-    const room = rooms[roomCode];
-    const player = room?.players.find((player) => player.id === socket.data.playerId);
-    if (!player?.isHost) return reply({ error: "Only the host can start the game." });
-    if (room.phase !== "lobby") return reply({ error: "The game has already started." });
+    const context = actionContext(socket, reply, ["lobby"], true);
+    if (!context) return;
+    const { roomCode, room } = context;
     if (room.players.length < 2) return reply({ error: "At least 2 players are needed to start." });
     if (room.players.length % 2 !== 0) return reply({ error: "An even number of players is needed to start." });
-    if (room.players.length > aliases.length) return reply({ error: "This room supports up to 16 players." });
+    if (room.players.length > MAX_PLAYERS) return reply({ error: `This room supports up to ${MAX_PLAYERS} players.` });
+    if (room.players.some((member) => !member.connected || member.left)) {
+      return reply({ error: "Wait for all players to reconnect before starting." });
+    }
 
     beginRound(roomCode);
     reply({ ok: true });
   });
 
-  socket.on("sendMessage", (messageText, actionRound, reply) => {
-    if (typeof reply !== "function") return;
-    const roomCode = socket.data.roomCode;
-    const room = rooms[roomCode];
-    const sender = room?.players.find((player) => player.id === socket.data.playerId);
-    if (!sender) return reply({ error: "You are not in a valid room." });
-    if (actionRound !== room.round) return reply({ error: "This action belongs to an earlier round." });
-    if (room.phase === "chat" && Date.now() >= room.chatEndsAt) endChat(roomCode);
-    if (room.phase !== "chat") return reply({ error: "Chat is not active." });
+  socket.on("sendMessage", (...args) => {
+    const reply = typeof args.at(-1) === "function" ? args.pop() : null;
+    if (!reply) return;
+    if (args.length !== 1) return reply({ error: "Send only a message." });
+    const [messageText] = args;
+    const context = actionContext(socket, reply, ["chat"]);
+    if (!context) return;
+    const { roomCode, room, player: sender } = context;
+    if (Date.now() >= room.chatEndsAt) {
+      endChat(roomCode, room.round);
+      return reply({ error: "Chat is not active." });
+    }
     const pair = room.pairs.find(({ player1Id, player2Id }) =>
       player1Id === sender.id || player2Id === sender.id
     );
@@ -340,28 +597,34 @@ io.on("connection", (socket) => {
 
     pair.messages.push({ senderId: sender.id, text });
     const visibleMessage = { senderAlias: sender.alias, text };
-    for (const socketId of io.sockets.adapter.rooms.get(roomCode) || []) {
-      const playerSocket = io.sockets.sockets.get(socketId);
-      if (playerSocket && [pair.player1Id, pair.player2Id].includes(playerSocket.data.playerId)) {
+    for (const playerId of [pair.player1Id, pair.player2Id]) {
+      const recipient = room.players.find((member) => member.id === playerId);
+      const playerSocket = recipient?.socketId && io.sockets.sockets.get(recipient.socketId);
+      if (playerForSocket(room, playerSocket)?.id === playerId) {
         playerSocket.emit("chatMessage", visibleMessage);
       }
     }
     reply({ ok: true });
   });
 
-  socket.on("submitGuess", (selectedPlayerId, actionRound, reply) => {
-    if (typeof reply !== "function") return;
-    const roomCode = socket.data.roomCode;
-    const room = rooms[roomCode];
-    const player = room?.players.find((member) => member.id === socket.data.playerId);
-    if (!player) return reply({ error: "You are not in a valid room." });
+  socket.on("submitGuess", (...args) => {
+    const reply = typeof args.at(-1) === "function" ? args.pop() : null;
+    if (!reply) return;
+    if (args.length !== 2) return reply({ error: "Choose one player for this round." });
+    const [selectedPlayerId, actionRound] = args;
+    const context = actionContext(socket, reply, ["guessing"]);
+    if (!context) return;
+    const { roomCode, room, player } = context;
+    if (typeof selectedPlayerId !== "string" || !Number.isInteger(actionRound)) {
+      return reply({ error: "Choose a valid player for this round." });
+    }
     if (actionRound !== room.round) return reply({ error: "This action belongs to an earlier round." });
     if (room.guesses && Object.hasOwn(room.guesses, player.id)) {
       return reply({ error: "You have already submitted a guess." });
     }
-    if (room.phase !== "guessing") return reply({ error: "Guessing is not active." });
-    const selected = room.players.find((member) => member.id === selectedPlayerId);
-    if (!selected) return reply({ error: "Choose a player from this room." });
+    const isValidOption = room.guessOptions?.[player.id]?.some((option) => option.id === selectedPlayerId);
+    const selected = room.players.find((member) => member.id === selectedPlayerId && !member.left);
+    if (!isValidOption || !selected) return reply({ error: "Choose a valid player from the list." });
     if (selected.id === player.id) return reply({ error: "You cannot choose yourself." });
 
     room.guesses[player.id] = selected.id;
@@ -380,10 +643,9 @@ io.on("connection", (socket) => {
 
   socket.on("continueToScoreboard", (reply) => {
     if (typeof reply !== "function") return;
-    const roomCode = socket.data.roomCode;
-    const room = rooms[roomCode];
-    const player = room?.players.find((member) => member.id === socket.data.playerId);
-    if (!player) return reply({ error: "You are not in a valid room." });
+    const context = actionContext(socket, reply, ["reveal", "scoreboard", "game_over"]);
+    if (!context) return;
+    const { roomCode, room, player } = context;
     if (room.phase === "scoreboard") {
       return reply({ scoreboard: scoreboardForPlayer(room, player) });
     }
@@ -395,7 +657,7 @@ io.on("connection", (socket) => {
       room.phase = "game_over";
       for (const socketId of io.sockets.adapter.rooms.get(roomCode) || []) {
         const playerSocket = io.sockets.sockets.get(socketId);
-        if (room.players.some((member) => member.id === playerSocket?.data.playerId)) {
+        if (playerForSocket(room, playerSocket)) {
           playerSocket.emit("gameOver", finalResults(room));
         }
       }
@@ -404,7 +666,7 @@ io.on("connection", (socket) => {
     room.phase = "scoreboard";
     for (const socketId of io.sockets.adapter.rooms.get(roomCode) || []) {
       const playerSocket = io.sockets.sockets.get(socketId);
-      const ownPlayer = room.players.find((member) => member.id === playerSocket?.data.playerId);
+      const ownPlayer = playerForSocket(room, playerSocket);
       if (ownPlayer) playerSocket.emit("scoreboardReady", scoreboardForPlayer(room, ownPlayer));
     }
     reply({ ok: true });
@@ -412,14 +674,32 @@ io.on("connection", (socket) => {
 
   socket.on("nextRound", (reply) => {
     if (typeof reply !== "function") return;
-    const roomCode = socket.data.roomCode;
-    const room = rooms[roomCode];
-    const player = room?.players.find((member) => member.id === socket.data.playerId);
-    if (!player?.isHost) return reply({ error: "Only the host can start the next round." });
+    const context = actionContext(socket, reply, ["scoreboard"], true);
+    if (!context) return;
+    const { roomCode, room } = context;
     if (room.round >= room.settings.totalRounds) return reply({ error: "All rounds are complete." });
-    if (room.phase !== "scoreboard") return reply({ error: "The next round cannot start yet." });
 
+    const remainingPlayers = room.players.filter((member) => !member.left);
+    if (remainingPlayers.length < 2 || remainingPlayers.length % 2) {
+      room.phase = "game_over";
+      io.to(roomCode).emit("gameOver", finalResults(room));
+      return reply({ error: "There are not enough connected players to continue." });
+    }
+
+    room.players = remainingPlayers;
     beginRound(roomCode);
+    reply({ ok: true });
+  });
+
+  socket.on("skipRound", (reply) => {
+    if (typeof reply !== "function") return;
+    const context = actionContext(socket, reply, ["chat", "guessing"], true);
+    if (!context) return;
+    const { roomCode, room } = context;
+    if (!room.roundBlocked || !["chat", "guessing"].includes(room.phase)) {
+      return reply({ error: "There is no blocked round to skip." });
+    }
+    skipBlockedRound(roomCode);
     reply({ ok: true });
   });
 });
