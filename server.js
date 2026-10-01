@@ -56,6 +56,41 @@ function shuffledChoices(choices) {
   return result;
 }
 
+function pairKey(player1Id, player2Id) {
+  return [player1Id, player2Id].sort().join("|");
+}
+
+function choosePairs(playerIds, pairHistory) {
+  let bestPairs;
+  let fewestRepeats = Infinity;
+
+  function search(remaining, pairs, repeats) {
+    if (remaining.length === 0) {
+      bestPairs = [...pairs];
+      fewestRepeats = repeats;
+      return repeats === 0;
+    }
+
+    const first = remaining[0];
+    const candidates = shuffledChoices(remaining.slice(1));
+    candidates.sort((a, b) =>
+      Number(pairHistory.has(pairKey(first, a))) - Number(pairHistory.has(pairKey(first, b)))
+    );
+    for (const second of candidates) {
+      const nextRepeats = repeats + Number(pairHistory.has(pairKey(first, second)));
+      if (nextRepeats >= fewestRepeats) continue;
+      pairs.push({ player1Id: first, player2Id: second });
+      const next = remaining.filter((id) => id !== first && id !== second);
+      if (search(next, pairs, nextRepeats)) return true;
+      pairs.pop();
+    }
+    return false;
+  }
+
+  search(shuffledChoices(playerIds), [], 0);
+  return bestPairs;
+}
+
 function guessingForPlayer(room, player) {
   const submitted = Object.hasOwn(room.guesses, player.id);
   return {
@@ -124,9 +159,10 @@ function beginRound(roomCode) {
   } while (room.players.some((player, index) => player.alias === newAliases[index]));
   room.players.forEach((player, index) => { player.alias = newAliases[index]; });
 
-  const shuffledIds = shuffledChoices(room.players.map((player) => player.id));
-  for (let i = 0; i < shuffledIds.length; i += 2) {
-    room.pairs.push({ player1Id: shuffledIds[i], player2Id: shuffledIds[i + 1], messages: [] });
+  const newPairs = choosePairs(room.players.map((player) => player.id), room.pairHistory);
+  for (const pair of newPairs) {
+    room.pairs.push({ ...pair, messages: [] });
+    room.pairHistory.add(pairKey(pair.player1Id, pair.player2Id));
   }
   room.round += 1;
   room.phase = "chat";
@@ -186,6 +222,7 @@ app.post("/api/rooms", (req, res) => {
     settings: { chatDuration, totalRounds },
     round: 0,
     scoredRound: 0,
+    pairHistory: new Set(),
     phase: "lobby"
   };
 
