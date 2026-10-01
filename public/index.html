@@ -69,6 +69,7 @@
       <p id="partner-alias"></p>
       <p>Round <span id="current-round"></span> of <span id="game-rounds"></span></p>
       <p>Chat duration: <span id="game-duration"></span> minutes</p>
+      <p>Time remaining: <strong id="countdown">00:00</strong></p>
       <div id="messages" aria-live="polite"></div>
       <form id="chat-form">
         <label for="message-input">Message</label>
@@ -76,6 +77,11 @@
         <button type="submit">Send</button>
         <p id="chat-error" role="alert"></p>
       </form>
+    </section>
+    <section id="guessing-screen" hidden>
+      <h2>Time's up!</h2>
+      <p>Who do you think you were talking to?</p>
+      <p>Guessing phase coming next...</p>
     </section>
     <script src="/socket.io/socket.io.js"></script>
     <script src="script.js"></script>

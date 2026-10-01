@@ -4,13 +4,21 @@ const createScreen = document.querySelector("#create-screen");
 const joinScreen = document.querySelector("#join-screen");
 const lobby = document.querySelector("#lobby");
 const identityScreen = document.querySelector("#identity-screen");
+const guessingScreen = document.querySelector("#guessing-screen");
 const createForm = document.querySelector("#create-form");
 const joinForm = document.querySelector("#join-form");
 const chatForm = document.querySelector("#chat-form");
-let currentRoomCode;
-let currentPlayerId;
-let currentPlayerName;
+let currentRoomCode = sessionStorage.getItem("roomCode");
+let currentPlayerId = sessionStorage.getItem("playerId");
+let currentPlayerName = sessionStorage.getItem("playerName");
 let currentAlias;
+let countdownInterval;
+
+function savePlayer() {
+  sessionStorage.setItem("roomCode", currentRoomCode);
+  sessionStorage.setItem("playerId", currentPlayerId);
+  sessionStorage.setItem("playerName", currentPlayerName);
+}
 
 function showLobby(room) {
   document.querySelector("#room-code").textContent = room.roomCode;
@@ -51,20 +59,58 @@ function showIdentity(identity) {
   document.querySelector("#current-round").textContent = identity.round;
   document.querySelector("#game-rounds").textContent = identity.totalRounds;
   document.querySelector("#game-duration").textContent = identity.chatDuration;
+  const messageInput = document.querySelector("#message-input");
+  messageInput.disabled = false;
+  chatForm.querySelector("button").disabled = false;
+  clearInterval(countdownInterval);
+  const localDeadline = Date.now() + Math.max(0, identity.chatEndsAt - identity.serverNow);
+  function updateCountdown() {
+    const seconds = Math.max(0, Math.ceil((localDeadline - Date.now()) / 1000));
+    document.querySelector("#countdown").textContent =
+      `${String(Math.floor(seconds / 60)).padStart(2, "0")}:${String(seconds % 60).padStart(2, "0")}`;
+    if (seconds === 0) {
+      messageInput.disabled = true;
+      chatForm.querySelector("button").disabled = true;
+      clearInterval(countdownInterval);
+    }
+  }
+  updateCountdown();
+  if (localDeadline > Date.now()) countdownInterval = setInterval(updateCountdown, 250);
   document.querySelector("#messages").replaceChildren();
   for (const message of identity.messages) showMessage(message);
   lobby.hidden = true;
+  guessingScreen.hidden = true;
   identityScreen.hidden = false;
+}
+
+function showGuessing() {
+  clearInterval(countdownInterval);
+  document.querySelector("#message-input").disabled = true;
+  chatForm.querySelector("button").disabled = true;
+  home.hidden = true;
+  createScreen.hidden = true;
+  joinScreen.hidden = true;
+  lobby.hidden = true;
+  identityScreen.hidden = true;
+  guessingScreen.hidden = false;
 }
 
 socket.on("roomUpdated", showLobby);
 socket.on("gameStarted", showIdentity);
 socket.on("chatMessage", showMessage);
+socket.on("chatEnded", showGuessing);
 socket.on("connect", () => {
   if (currentRoomCode && currentPlayerId) {
     socket.emit("enterRoom", { roomCode: currentRoomCode, playerId: currentPlayerId }, (result) => {
       if (result.room) showLobby(result.room);
       if (result.identity) showIdentity(result.identity);
+      if (result.guessing) showGuessing();
+      if (result.error) {
+        sessionStorage.removeItem("roomCode");
+        sessionStorage.removeItem("playerId");
+        sessionStorage.removeItem("playerName");
+        currentRoomCode = currentPlayerId = currentPlayerName = null;
+      }
     });
   }
 });
@@ -107,6 +153,7 @@ createForm.addEventListener("submit", async (event) => {
     currentRoomCode = created.roomCode;
     currentPlayerId = created.playerId;
     currentPlayerName = name;
+    savePlayer();
     socket.emit("enterRoom", { roomCode: currentRoomCode, playerId: currentPlayerId }, (result) => {
       if (result.error) error.textContent = result.error;
       else showLobby(result.room);
@@ -135,6 +182,7 @@ joinForm.addEventListener("submit", (event) => {
     currentRoomCode = result.room.roomCode;
     currentPlayerId = result.playerId;
     currentPlayerName = name;
+    savePlayer();
     showLobby(result.room);
   });
 });

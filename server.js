@@ -38,11 +38,22 @@ function matchForPlayer(room, player) {
     round: room.round,
     totalRounds: room.settings.totalRounds,
     chatDuration: room.settings.chatDuration,
+    chatEndsAt: room.chatEndsAt,
+    serverNow: Date.now(),
     messages: pair.messages.map(({ senderId, text }) => ({
       senderAlias: room.players.find((member) => member.id === senderId).alias,
       text
     }))
   };
+}
+
+function endChat(roomCode) {
+  const room = rooms[roomCode];
+  if (!room || room.phase !== "chat") return;
+  clearTimeout(room.chatTimer);
+  room.chatTimer = null;
+  room.phase = "guessing";
+  io.to(roomCode).emit("chatEnded");
 }
 
 app.use(express.json());
@@ -87,9 +98,11 @@ io.on("connection", (socket) => {
     socket.join(roomCode);
     socket.data.roomCode = roomCode;
     socket.data.playerId = playerId;
+    if (room.phase === "chat" && Date.now() >= room.chatEndsAt) endChat(roomCode);
     if (room.phase === "chat") {
       return reply({ identity: matchForPlayer(room, player) });
     }
+    if (room.phase === "guessing") return reply({ guessing: true });
     reply({ room: publicRoom(roomCode) });
   });
 
@@ -145,6 +158,9 @@ io.on("connection", (socket) => {
     }
     room.phase = "chat";
     room.round = 1;
+    room.chatStartedAt = Date.now();
+    room.chatEndsAt = room.chatStartedAt + room.settings.chatDuration * 60 * 1000;
+    room.chatTimer = setTimeout(() => endChat(roomCode), room.chatEndsAt - room.chatStartedAt);
 
     for (const socketId of io.sockets.adapter.rooms.get(roomCode) || []) {
       const playerSocket = io.sockets.sockets.get(socketId);
@@ -162,6 +178,7 @@ io.on("connection", (socket) => {
     const room = rooms[roomCode];
     const sender = room?.players.find((player) => player.id === socket.data.playerId);
     if (!sender) return reply({ error: "You are not in a valid room." });
+    if (room.phase === "chat" && Date.now() >= room.chatEndsAt) endChat(roomCode);
     if (room.phase !== "chat") return reply({ error: "Chat is not active." });
     const pair = room.pairs.find(({ player1Id, player2Id }) =>
       player1Id === sender.id || player2Id === sender.id
