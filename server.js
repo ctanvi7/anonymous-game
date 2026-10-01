@@ -26,6 +26,21 @@ function publicRoom(roomCode) {
   };
 }
 
+function matchForPlayer(room, player) {
+  const pair = room.pairs.find(({ player1Id, player2Id }) =>
+    player1Id === player.id || player2Id === player.id
+  );
+  const partnerId = pair.player1Id === player.id ? pair.player2Id : pair.player1Id;
+  const partner = room.players.find((member) => member.id === partnerId);
+  return {
+    alias: player.alias,
+    partnerAlias: partner.alias,
+    round: room.round,
+    totalRounds: room.settings.totalRounds,
+    chatDuration: room.settings.chatDuration
+  };
+}
+
 app.use(express.json());
 app.use(express.static(path.join(__dirname, "public")));
 
@@ -67,12 +82,7 @@ io.on("connection", (socket) => {
     socket.data.roomCode = roomCode;
     socket.data.playerId = playerId;
     if (room.phase === "game_started") {
-      return reply({ identity: {
-        alias: player.alias,
-        round: room.round,
-        totalRounds: room.settings.totalRounds,
-        chatDuration: room.settings.chatDuration
-      } });
+      return reply({ identity: matchForPlayer(room, player) });
     }
     reply({ room: publicRoom(roomCode) });
   });
@@ -115,6 +125,15 @@ io.on("connection", (socket) => {
       const index = randomInt(availableAliases.length);
       roomPlayer.alias = availableAliases.splice(index, 1)[0];
     }
+    const shuffledIds = room.players.map((member) => member.id);
+    for (let i = shuffledIds.length - 1; i > 0; i--) {
+      const j = randomInt(i + 1);
+      [shuffledIds[i], shuffledIds[j]] = [shuffledIds[j], shuffledIds[i]];
+    }
+    room.pairs = [];
+    for (let i = 0; i < shuffledIds.length; i += 2) {
+      room.pairs.push({ player1Id: shuffledIds[i], player2Id: shuffledIds[i + 1] });
+    }
     room.phase = "game_started";
     room.round = 1;
 
@@ -122,12 +141,7 @@ io.on("connection", (socket) => {
       const playerSocket = io.sockets.sockets.get(socketId);
       const ownPlayer = room.players.find((member) => member.id === playerSocket.data.playerId);
       if (ownPlayer) {
-        playerSocket.emit("gameStarted", {
-          alias: ownPlayer.alias,
-          round: room.round,
-          totalRounds: room.settings.totalRounds,
-          chatDuration: room.settings.chatDuration
-        });
+        playerSocket.emit("gameStarted", matchForPlayer(room, ownPlayer));
       }
     }
     reply({ ok: true });

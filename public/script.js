@@ -36,6 +36,7 @@ function showLobby(room) {
 
 function showIdentity(identity) {
   document.querySelector("#my-alias").textContent = identity.alias;
+  document.querySelector("#partner-alias").textContent = identity.partnerAlias;
   document.querySelector("#current-round").textContent = identity.round;
   document.querySelector("#game-rounds").textContent = identity.totalRounds;
   document.querySelector("#game-duration").textContent = identity.chatDuration;
