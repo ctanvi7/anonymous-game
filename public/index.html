@@ -94,9 +94,16 @@
       </div>
       <p id="guess-progress"></p>
     </section>
-    <section id="reveal-ready-screen" hidden>
-      <h2>Everyone has submitted!</h2>
-      <p>Preparing results...</p>
+    <section id="reveal-screen" hidden>
+      <h2>REVEAL</h2>
+      <p>You were chatting with:</p>
+      <p id="revealed-alias"></p>
+      <p>↓</p>
+      <p id="revealed-name"></p>
+      <p>Your guess: <span id="guessed-name"></span></p>
+      <h3 id="guess-result"></h3>
+      <p id="partner-result"></p>
+      <button type="button" disabled>Continue to scoreboard</button>
     </section>
     <script src="/socket.io/socket.io.js"></script>
     <script src="script.js"></script>

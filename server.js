@@ -66,6 +66,22 @@ function guessingForPlayer(room, player) {
   };
 }
 
+function revealForPlayer(room, player) {
+  const pair = room.pairs?.find(({ player1Id, player2Id }) =>
+    player1Id === player.id || player2Id === player.id
+  );
+  const partnerId = pair && (pair.player1Id === player.id ? pair.player2Id : pair.player1Id);
+  const partner = room.players.find((member) => member.id === partnerId);
+  const guessed = room.players.find((member) => member.id === room.guesses?.[player.id]);
+  return {
+    partnerAlias: partner?.alias || "Unknown",
+    partnerName: partner?.name || "Unknown",
+    guessedName: guessed?.name || "No guess submitted",
+    correct: Boolean(partner && room.guesses?.[player.id] === partner.id),
+    partnerCorrect: Boolean(partner && room.guesses?.[partner.id] === player.id)
+  };
+}
+
 function endChat(roomCode) {
   const room = rooms[roomCode];
   if (!room || room.phase !== "chat") return;
@@ -134,7 +150,7 @@ io.on("connection", (socket) => {
       return reply({ identity: matchForPlayer(room, player) });
     }
     if (room.phase === "guessing") return reply({ guessing: guessingForPlayer(room, player) });
-    if (room.phase === "reveal_ready") return reply({ revealReady: true });
+    if (room.phase === "reveal") return reply({ reveal: revealForPlayer(room, player) });
     reply({ room: publicRoom(roomCode) });
   });
 
@@ -251,10 +267,14 @@ io.on("connection", (socket) => {
     const submittedCount = Object.keys(room.guesses).length;
     io.to(roomCode).emit("guessProgress", { submittedCount, totalPlayers: room.players.length });
     if (submittedCount === room.players.length) {
-      room.phase = "reveal_ready";
-      io.to(roomCode).emit("revealReady");
+      room.phase = "reveal";
+      for (const socketId of io.sockets.adapter.rooms.get(roomCode) || []) {
+        const playerSocket = io.sockets.sockets.get(socketId);
+        const ownPlayer = room.players.find((member) => member.id === playerSocket?.data.playerId);
+        if (ownPlayer) playerSocket.emit("revealResult", revealForPlayer(room, ownPlayer));
+      }
     }
-    reply({ ok: true, revealReady: room.phase === "reveal_ready" });
+    reply({ ok: true, reveal: room.phase === "reveal" });
   });
 });
 
