@@ -7,7 +7,7 @@ const { Server } = require("socket.io");
 const app = express();
 const server = createServer(app);
 const io = new Server(server);
-const port = 3000;
+const PORT = process.env.PORT || 3000;
 const rooms = Object.create(null);
 const disconnectGraceMs = 60 * 1000;
 const abandonedRoomCleanupMs = 5 * 60 * 1000;
@@ -418,6 +418,10 @@ function endChat(roomCode, expectedRound) {
 app.use(express.json());
 app.use(express.static(path.join(__dirname, "public")));
 
+app.get("/health", (req, res) => {
+  res.status(200).json({ status: "ok" });
+});
+
 app.post("/api/rooms", (req, res) => {
   const name = cleanPlayerName(req.body?.name);
   const chatDuration = req.body?.chatDuration;
@@ -704,6 +708,6 @@ io.on("connection", (socket) => {
   });
 });
 
-server.listen(port, () => {
-  console.log(`Server is running at http://localhost:${port}`);
+server.listen(PORT, "0.0.0.0", () => {
+  console.log(`Server is running on port ${PORT}`);
 });
