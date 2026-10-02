@@ -3,143 +3,166 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#EEEAE2" />
     <title>Behind the Alias</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Sora:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
     <link rel="stylesheet" href="style.css" />
   </head>
   <body>
-    <p id="partner-status" role="status" hidden></p>
-    <section id="round-control" hidden>
+    <p id="partner-status" class="status-banner" role="status" hidden></p>
+    <section id="round-control" class="status-banner status-banner--warning" hidden>
       <p>A player left during this round. The host can skip the round.</p>
-      <button type="button" id="skip-round">Skip Round</button>
-      <p id="skip-round-error" role="alert"></p>
+      <button type="button" id="skip-round" class="button button--small">Skip Round</button>
+      <p id="skip-round-error" class="inline-error" role="alert"></p>
     </section>
-    <main id="home">
-      <h1>Behind the Alias</h1>
-      <p>Can you figure out who's behind the screen?</p>
-      <button type="button" id="show-create-form">Create Room</button>
-      <button type="button" id="show-join-form">Join Room</button>
-    </main>
-    <section id="create-screen" hidden>
-      <h2>Create Room</h2>
-      <form id="create-form">
-        <label for="player-name">Player name</label>
-        <input id="player-name" name="name" maxlength="30" required />
 
-        <label for="chat-duration">Chat duration</label>
-        <select id="chat-duration" name="chatDuration">
-          <option value="2">2 minutes</option>
-          <option value="3" selected>3 minutes</option>
-          <option value="5">5 minutes</option>
-        </select>
+    <div class="app-shell">
+      <header class="site-header">
+        <div class="wordmark" aria-label="Behind the Alias"><span class="wordmark-mark" aria-hidden="true">BA</span><span>BEHIND THE ALIAS</span></div>
+        <span class="header-note">A game of read, reveal, repeat</span>
+        <button type="button" id="sound-toggle" class="sound-toggle" aria-pressed="true" aria-label="Sound is on">SOUND <span id="sound-state">ON</span></button>
+      </header>
 
-        <label for="total-rounds">Number of rounds</label>
-        <select id="total-rounds" name="totalRounds">
-          <option value="1">1 round</option>
-          <option value="3" selected>3 rounds</option>
-          <option value="5">5 rounds</option>
-        </select>
+      <main id="home" class="screen home-screen">
+        <p class="eyebrow">A SOCIAL DEDUCTION GAME</p>
+        <div class="home-title-wrap">
+          <h1 id="home-title" tabindex="-1">Behind<br /><em>the Alias</em></h1>
+          <div class="home-stamp" aria-hidden="true"><span>READ<br />THE ROOM</span><i></i></div>
+        </div>
+        <p class="home-lede">Talk. Bluff. Guess who's on the other side.</p>
+        <div class="home-actions">
+          <button type="button" id="show-create-form" class="button button--primary">Create Room <span aria-hidden="true">↗</span></button>
+          <button type="button" id="show-join-form" class="button button--outline">Join Room <span aria-hidden="true">↗</span></button>
+        </div>
+        <p class="home-microcopy">Keep your story straight.</p>
+        <footer class="site-footer"><span>Made for people who know each other too well.</span><nav aria-label="Legal"><a href="#terms">Terms</a><a href="#privacy">Privacy</a></nav></footer>
+      </main>
 
-        <button type="submit">Create Room</button>
-        <p id="form-error" role="alert"></p>
-      </form>
-    </section>
-    <section id="join-screen" hidden>
-      <h2>Join Room</h2>
-      <form id="join-form">
-        <label for="join-name">Player name</label>
-        <input id="join-name" name="name" maxlength="30" required />
+      <section id="create-screen" class="screen form-screen" hidden>
+        <a href="#home" class="back-link" data-go-home>← Home</a>
+        <p class="eyebrow">SET THE SCENE</p>
+        <h1>Create a<br /><em>room</em></h1>
+        <form id="create-form" class="form-panel">
+          <label for="player-name">Your name</label>
+          <input id="player-name" name="name" maxlength="30" autocomplete="name" placeholder="What do friends call you?" required />
 
-        <label for="join-code">Room code</label>
-        <input id="join-code" name="roomCode" maxlength="5" required />
+          <fieldset class="choice-group">
+            <legend>Chat duration</legend>
+            <div class="choice-row">
+              <label class="choice"><input type="radio" name="chatDuration" value="2" /><span>2 <small>MIN</small></span></label>
+              <label class="choice"><input type="radio" name="chatDuration" value="3" checked /><span>3 <small>MIN</small></span></label>
+              <label class="choice"><input type="radio" name="chatDuration" value="5" /><span>5 <small>MIN</small></span></label>
+            </div>
+          </fieldset>
 
-        <button type="submit">Join Room</button>
-        <p id="join-error" role="alert"></p>
-      </form>
-    </section>
-    <section id="lobby" hidden>
-      <h2>Room Code</h2>
-      <p id="room-code"></p>
-      <h3>Players</h3>
-      <ul id="player-list"></ul>
-      <p>Chat duration: <span id="lobby-duration"></span> minutes</p>
-      <p>Number of rounds: <span id="lobby-rounds"></span></p>
-      <p>Waiting for players...</p>
-      <button type="button" id="start-game">Start Game</button>
-      <p id="start-error" role="alert"></p>
-    </section>
-    <section id="identity-screen" hidden>
-      <h2>Private Chat</h2>
-      <p>You are:</p>
-      <p id="my-alias"></p>
-      <p>Chatting with:</p>
-      <p id="partner-alias"></p>
-      <p>Round <span id="current-round"></span> of <span id="game-rounds"></span></p>
-      <p>Chat duration: <span id="game-duration"></span> minutes</p>
-      <p>Time remaining: <strong id="countdown">00:00</strong></p>
-      <div id="messages" aria-live="polite"></div>
-      <form id="chat-form">
-        <label for="message-input">Message</label>
-        <input id="message-input" maxlength="500" autocomplete="off" required />
-        <button type="submit">Send</button>
-        <p id="chat-error" role="alert"></p>
-      </form>
-    </section>
-    <section id="guessing-screen" hidden>
-      <div id="guess-choices">
-        <h2>Time's up!</h2>
-        <p>Who do you think you were talking to?</p>
-        <form id="guess-form">
-          <div id="guess-options"></div>
-          <button type="submit">Submit Guess</button>
-          <p id="guess-error" role="alert"></p>
+          <fieldset class="choice-group">
+            <legend>Rounds</legend>
+            <div class="choice-row">
+              <label class="choice"><input type="radio" name="totalRounds" value="1" /><span>1 <small>ROUND</small></span></label>
+              <label class="choice"><input type="radio" name="totalRounds" value="3" checked /><span>3 <small>ROUNDS</small></span></label>
+              <label class="choice"><input type="radio" name="totalRounds" value="5" /><span>5 <small>ROUNDS</small></span></label>
+            </div>
+          </fieldset>
+          <button type="submit" class="button button--primary button--wide">Create Room <span aria-hidden="true">↗</span></button>
+          <p id="form-error" class="inline-error" role="alert"></p>
         </form>
-      </div>
-      <div id="guess-waiting" hidden>
-        <h2>Guess submitted!</h2>
-        <p>Waiting for other players...</p>
-      </div>
-      <p id="guess-progress"></p>
-    </section>
-    <section id="reveal-screen" hidden>
-      <h2>REVEAL</h2>
-      <p>You were chatting with:</p>
-      <p id="revealed-alias"></p>
-      <p>↓</p>
-      <p id="revealed-name"></p>
-      <p>Your guess: <span id="guessed-name"></span></p>
-      <h3 id="guess-result"></h3>
-      <p id="partner-result"></p>
-      <button type="button" id="continue-to-scoreboard">Continue to scoreboard</button>
-      <p id="reveal-error" role="alert"></p>
-    </section>
-    <section id="scoreboard-screen" hidden>
-      <h2 id="round-complete"></h2>
-      <p id="scoreboard-round"></p>
-      <table>
-        <thead>
-          <tr><th>Rank</th><th>Player name</th><th>Round points</th><th>Total points</th></tr>
-        </thead>
-        <tbody id="scoreboard-rows"></tbody>
-      </table>
-      <button type="button" id="next-round" disabled>Next Round</button>
-      <p id="next-round-error" role="alert"></p>
-      <p id="waiting-for-host">Waiting for host to start the next round...</p>
-    </section>
-    <section id="game-over-screen" hidden>
-      <h2>GAME OVER</h2>
-      <h3 id="winner-label"></h3>
-      <p id="winners"></p>
-      <h3>Final Leaderboard</h3>
-      <table>
-        <thead>
-          <tr><th>Rank</th><th>Player</th><th>Round Score</th><th>Total Score</th><th>Correct Guesses</th><th>Times Fooled Partner</th></tr>
-        </thead>
-        <tbody id="final-rows"></tbody>
-      </table>
-      <p>Best Detective: <span id="best-detectives"></span></p>
-      <p>Most Mysterious: <span id="most-mysterious"></span></p>
-      <button type="button" id="back-home">Back to Home</button>
-    </section>
+      </section>
+
+      <section id="join-screen" class="screen form-screen" hidden>
+        <a href="#home" class="back-link" data-go-home>← Home</a>
+        <p class="eyebrow">YOUR FRIENDS ARE WAITING</p>
+        <h1>Join a<br /><em>room</em></h1>
+        <form id="join-form" class="form-panel">
+          <label for="join-name">Your name</label>
+          <input id="join-name" name="name" maxlength="30" autocomplete="name" placeholder="What do friends call you?" required />
+          <label for="join-code">Room code</label>
+          <input id="join-code" class="room-code-input" name="roomCode" maxlength="5" autocomplete="off" autocapitalize="characters" placeholder="AB7KQ" required />
+          <button type="submit" class="button button--primary button--wide">Join Room <span aria-hidden="true">↗</span></button>
+          <p id="join-error" class="inline-error" role="alert"></p>
+        </form>
+      </section>
+
+      <section id="lobby" class="screen game-screen" hidden>
+        <div class="screen-heading"><div><p class="eyebrow">THE ROOM IS SET</p><h1 id="lobby-title" tabindex="-1">Before the<br /><em>game begins</em></h1></div><span class="round-chip">LOBBY</span></div>
+        <div class="lobby-layout">
+          <section class="room-code-panel" aria-label="Room code">
+            <p class="eyebrow">ROOM CODE</p><p id="room-code" class="room-code-value"></p>
+            <button type="button" id="copy-room-code" class="text-button">Copy code <span aria-hidden="true">↗</span></button><span id="copy-feedback" class="copy-feedback" role="status" aria-live="polite"></span>
+          </section>
+          <section class="players-panel">
+            <div class="section-topline"><h2>Players</h2><p><span id="player-count">0</span> <span class="muted">IN THE ROOM</span></p></div>
+            <ul id="player-list" class="player-list"></ul>
+            <p class="lobby-note">Everyone ready to lie?</p>
+          </section>
+          <section class="settings-panel" aria-label="Room settings">
+            <div><span class="eyebrow">CHAT TIME</span><strong><span id="lobby-duration"></span> <small>MIN</small></strong></div>
+            <div><span class="eyebrow">ROUNDS</span><strong id="lobby-rounds"></strong></div>
+          </section>
+        </div>
+        <div class="lobby-action"><button type="button" id="start-game" class="button button--primary button--wide">Start Game <span aria-hidden="true">↗</span></button><p id="start-error" class="inline-error" role="alert"></p><p id="waiting-for-players" class="waiting-copy" hidden>Waiting for the host...</p></div>
+      </section>
+
+      <section id="identity-screen" class="screen game-screen play-screen" hidden>
+        <div class="play-header"><p class="eyebrow">ROUND <span id="current-round"></span> / <span id="game-rounds"></span></p><span class="round-chip">PRIVATE CHAT</span></div>
+        <div id="match-found" class="match-found" hidden>
+          <p id="match-found-title" class="eyebrow" tabindex="-1">MATCH FOUND</p>
+          <div class="match-found-players"><div><span class="eyebrow">YOU</span><strong id="match-own-alias"></strong></div><span class="match-found-divider" aria-hidden="true">WITH</span><div><span class="eyebrow">THEM</span><strong id="match-partner-alias"></strong></div></div>
+          <p>Chat begins shortly.</p>
+        </div>
+        <div id="active-chat">
+          <div class="match-strip">
+            <div class="identity-block"><span class="eyebrow">YOUR ALIAS</span><span class="alias-mark" aria-hidden="true"></span><strong id="my-alias" class="alias-name" tabindex="-1"></strong><span class="identity-caption">Remember it. Defend it.</span></div>
+            <div class="match-divider"><span>PAIRED WITH</span><i aria-hidden="true"></i></div>
+            <div class="identity-block identity-block--partner"><span class="eyebrow">THEM</span><span class="alias-mark alias-mark--partner" aria-hidden="true"></span><strong id="partner-alias" class="alias-name"></strong><span class="identity-caption">A stranger for now.</span></div>
+          </div>
+          <div class="chat-meta"><div><span class="eyebrow">TIME LEFT</span><strong id="countdown" class="countdown" aria-live="off">00:00</strong></div><p><span id="game-duration"></span> minute conversation. Keep your story straight.</p></div>
+          <div id="messages" class="messages" aria-live="polite" aria-label="Chat messages"></div>
+          <form id="chat-form" class="chat-form">
+            <label class="visually-hidden" for="message-input">Message</label>
+            <input id="message-input" maxlength="500" autocomplete="off" placeholder="Say something convincing..." required />
+            <button type="submit" class="button button--primary">Send <span aria-hidden="true">↗</span></button>
+            <p id="chat-error" class="inline-error" role="alert"></p>
+          </form>
+        </div>
+      </section>
+
+      <section id="guessing-screen" class="screen game-screen guess-screen" hidden>
+        <p class="eyebrow">ROUND <span id="guess-round"></span> / <span id="guess-rounds"></span></p>
+        <div id="guess-choices">
+          <h1 id="guess-title" tabindex="-1">Who were you<br /><em>talking to?</em></h1><p class="section-lede">Time to commit.</p>
+          <form id="guess-form" class="guess-form"><div id="guess-options" class="guess-options"></div><button type="submit" class="button button--primary button--wide">Lock Guess <span aria-hidden="true">↗</span></button><p id="guess-error" class="inline-error" role="alert"></p></form>
+        </div>
+        <div id="guess-waiting" class="guess-waiting" hidden><p class="eyebrow">YOUR ANSWER IS IN</p><h1 id="guess-waiting-title" tabindex="-1">Guess<br /><em>locked.</em></h1><p id="chosen-guess" class="chosen-guess"></p><p>Waiting for the room...</p></div>
+        <p id="guess-progress" class="progress-copy"></p>
+      </section>
+
+      <section id="reveal-screen" class="screen game-screen reveal-screen" hidden>
+        <p class="eyebrow">THE MOMENT OF TRUTH</p><h1 id="reveal-title" tabindex="-1">Time to<br /><em>unmask</em></h1>
+        <div class="reveal-pair"><div><span class="eyebrow">ALIAS</span><strong id="revealed-alias"></strong></div><span class="reveal-was">WAS</span><div><span class="eyebrow">PLAYER</span><strong id="revealed-name"></strong></div></div>
+        <div class="guess-result-row"><div><span class="eyebrow">YOUR GUESS</span><strong id="guessed-name"></strong></div><h2 id="guess-result"></h2></div>
+        <p id="round-points" class="round-points"></p><p id="partner-result" class="partner-result"></p>
+        <button type="button" id="continue-to-scoreboard" class="button button--primary button--wide">Continue to scoreboard <span aria-hidden="true">↗</span></button>
+        <p id="reveal-error" class="inline-error" role="alert"></p>
+      </section>
+
+      <section id="scoreboard-screen" class="screen game-screen results-screen" hidden>
+        <div class="screen-heading"><div><p class="eyebrow">THE TALLY</p><h1 id="round-complete" tabindex="-1"></h1><p id="scoreboard-round" class="section-lede"></p></div><span class="round-chip">SCOREBOARD</span></div>
+        <div class="table-wrap"><table><thead><tr><th>Rank</th><th>Player</th><th>Round points</th><th>Total points</th></tr></thead><tbody id="scoreboard-rows"></tbody></table></div>
+        <div class="results-action"><button type="button" id="next-round" class="button button--primary button--wide" disabled>Next Round <span aria-hidden="true">↗</span></button><p id="next-round-error" class="inline-error" role="alert"></p><p id="waiting-for-host" class="waiting-copy">Waiting for host to start the next round...</p></div>
+      </section>
+
+      <section id="game-over-screen" class="screen game-screen game-over-screen" hidden>
+        <p class="eyebrow">THAT'S A WRAP</p><h1 id="game-over-title" tabindex="-1">Game<br /><em>over.</em></h1>
+        <div class="winner-block"><span id="winner-label" class="eyebrow"></span><strong id="winners"></strong></div>
+        <h2 class="table-title">Final leaderboard</h2>
+        <div class="table-wrap"><table><thead><tr><th>Rank</th><th>Player</th><th>Round</th><th>Total</th><th>Guesses</th><th>Fooled</th></tr></thead><tbody id="final-rows"></tbody></table></div>
+        <div class="awards-row"><section class="award"><span class="eyebrow">BEST DETECTIVE</span><strong id="best-detectives"></strong><span class="award-note">Most correct guesses</span></section><section class="award award--secondary"><span class="eyebrow">MOST MYSTERIOUS</span><strong id="most-mysterious"></strong><span class="award-note">Fooled their partner most</span></section></div>
+        <button type="button" id="back-home" class="button button--outline button--wide">Back to Home <span aria-hidden="true">↗</span></button>
+      </section>
+      <footer class="game-footer"><span>BEHIND THE ALIAS</span><span>Read the room.</span></footer>
+    </div>
     <script src="/socket.io/socket.io.js"></script>
     <script src="script.js"></script>
   </body>
